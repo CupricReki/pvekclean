@@ -445,7 +445,7 @@ install_program() {
 					printf "${bold}${green}[✓]${reset} Installed PVE Kernel Cleaner to /usr/local/sbin/$program_name\n"
 					printf "${bold}[*]${reset} You can now use the command \"$program_name\" to run this program.\n"
 				fi
-				printf "${bold}[-]${reset} Continuing with kernel cleanup...\n\n"
+				printf "${bold}[-]${reset} Continuing with kernel cleanup...\n"
 				# Don't exit - continue with the script execution
 			fi
 			# if [ -n "$force_pvekclean_install" ]; then
@@ -975,14 +975,14 @@ main() {
 	check_root
 	# Show header information
 	header_info
+	# Check for updates FIRST (before any other prompts)
+	check_for_update
+	# Install program to /usr/local/sbin/ (if update available or first time)
+	install_program
 	# Script usage
 	show_usage
-	# Show kernel information
+	# Show kernel information (this may have prompts about kernel warnings)
 	kernel_info
-	# Check for updates
-	check_for_update
-	# Install program to /usr/local/sbin/
-	install_program
 }
 
 while [[ $# -gt 0 ]]; do
