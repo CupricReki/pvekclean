@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.6"
+version="2.2.7"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -161,6 +161,20 @@ kernel_info() {
         elif mountpoint -q /efi 2>/dev/null; then
             efi_partition="/efi"
             use_efi_grub=true
+        # Check if /boot/efi is in fstab but not mounted
+        elif grep -qs '/boot/efi' /etc/fstab; then
+            # Try to mount it
+            if mount /boot/efi 2>/dev/null; then
+                efi_partition="/boot/efi"
+                use_efi_grub=true
+            fi
+        # Check if /efi is in fstab but not mounted
+        elif grep -qs '/efi' /etc/fstab; then
+            # Try to mount it
+            if mount /efi 2>/dev/null; then
+                efi_partition="/efi"
+                use_efi_grub=true
+            fi
         fi
     fi
     
@@ -617,12 +631,23 @@ pve_kernel_clean() {
     
     # Check for EFI with GRUB (if proxmox-boot-tool not detected)
     if [ "$bootloader_detected" = false ] && [ -d "/sys/firmware/efi" ]; then
-        # Check if /boot/efi is mounted (common EFI setup)
+        local efi_mounted=false
+        # Check if /boot/efi or /efi is mounted
         if mountpoint -q /boot/efi 2>/dev/null || mountpoint -q /efi 2>/dev/null; then
-            if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
-                use_efi_grub=true
-                bootloader_detected=true
+            efi_mounted=true
+        else
+            # Check if /boot/efi is in fstab but not mounted
+            if grep -qs '/boot/efi' /etc/fstab; then
+                mount /boot/efi 2>/dev/null && efi_mounted=true
+            # Check if /efi is in fstab but not mounted
+            elif grep -qs '/efi' /etc/fstab; then
+                mount /efi 2>/dev/null && efi_mounted=true
             fi
+        fi
+        
+        if [ "$efi_mounted" = true ] && [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
+            use_efi_grub=true
+            bootloader_detected=true
         fi
     fi
     
