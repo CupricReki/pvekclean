@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.7"
+version="2.2.8"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -455,8 +455,8 @@ install_program() {
 				if [ $force_pvekclean_update == true ]; then
 					printf "${bold}[*]${reset} Updating PVE Kernel Cleaner...\n"
 				fi
-				cp $0 /usr/local/sbin/$program_name
-				chmod +x /usr/local/sbin/$program_name
+				cp "$0" "/usr/local/sbin/$program_name"
+				chmod +x "/usr/local/sbin/$program_name"
 				# Tell user how to use it
 				if [ $force_pvekclean_update == true ]; then
 					printf "${bold}${green}[✓]${reset} Successfully updated to version $version\n"
@@ -831,8 +831,13 @@ pve_kernel_clean() {
 
             for pkg in "${kernel_packages_to_remove[@]}"; do
                 local is_kept=false
-                for kept_kernel in "${unique_kernels_to_keep[@]}"; do
-                    if [[ "$pkg" == *"$kept_kernel"* ]]; then
+                # Extract version from kept kernels for matching
+                for kept_kernel_pkg in "${unique_kernels_to_keep[@]}"; do
+                    # Extract version: proxmox-kernel-X.X.X-X-pve-signed -> X.X.X-X-pve
+                    local kept_version
+                    kept_version=$(echo "$kept_kernel_pkg" | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//')
+                    # Check if current package contains this version
+                    if [[ "$pkg" == *"$kept_version"* ]]; then
                         kernels_to_keep+=("$pkg")
                         is_kept=true
                         break
@@ -1029,11 +1034,10 @@ main() {
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	-i|--install )
-		force_pvekclean_install=true
 		# Skip normal flow, just install and exit
 		check_root
-		cp $0 /usr/local/sbin/$program_name
-		chmod +x /usr/local/sbin/$program_name
+		cp "$0" "/usr/local/sbin/$program_name"
+		chmod +x "/usr/local/sbin/$program_name"
 		printf "${bold}${green}[✓]${reset} Installed PVE Kernel Cleaner to /usr/local/sbin/$program_name\n"
 		printf "${bold}[*]${reset} You can now use the command \"$program_name\" to run this program.\n"
 		exit 0
