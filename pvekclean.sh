@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.9"
+version="2.3.0"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -200,49 +200,44 @@ kernel_info() {
             printf " ${bold}Boot Method:${reset} proxmox-boot-tool (managing ESP, booted in Legacy/BIOS)\n"
         fi
         
-        local boot_total_h="N/A"
-        local boot_used_h="N/A"
-        local boot_free_h="N/A"
-        local boot_percent="N/A"
-        local esp_mounted=false
-        local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+        # Get ALL ESP UUIDs configured in proxmox-boot-tool
+        local esp_uuids
+        esp_uuids=($(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}'))
         
-        # Find first ESP partition using blkid (more reliable than parsing proxmox-boot-tool output)
-        local esp_device
-        esp_device=$(blkid -t PARTLABEL="EFI System Partition" -o device 2>/dev/null | head -n 1)
-        
-        # Fallback: look for vfat partitions on main disks
-        if [ -z "$esp_device" ]; then
-            esp_device=$(blkid -t TYPE=vfat 2>/dev/null | grep -E '/(sd[a-z]|nvme[0-9]+n[0-9]+)p?[0-9]+' | head -n 1 | cut -d: -f1)
-        fi
-        
-        if [ -n "$esp_device" ]; then
-            mkdir -p "$mount_point"
+        if [ ${#esp_uuids[@]} -gt 0 ]; then
+            printf " ${bold}ESP Partitions:${reset} ${#esp_uuids[@]} configured\n"
             
-            # Try mounting the ESP device
-            if mount -t vfat -o ro "$esp_device" "$mount_point" 2>/dev/null; then
-                esp_mounted=true
-            fi
-            
-            # If mounted, get stats
-            if [ "$esp_mounted" = true ] && mountpoint -q "$mount_point" 2>/dev/null; then
-                local boot_details=($(df -P "$mount_point" | tail -1))
-                if [ ${#boot_details[@]} -ge 5 ]; then
-                    boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
-                    boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
-                    boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
-                    boot_percent=${boot_details[4]%?}
+            # Show details for each ESP
+            local esp_num=1
+            for esp_uuid in "${esp_uuids[@]}"; do
+                local mount_point="/var/tmp/pvekclean_esp_info_${esp_uuid}_$$"
+                mkdir -p "$mount_point"
+                
+                local esp_total="N/A"
+                local esp_used="N/A"
+                local esp_free="N/A"
+                local esp_percent="N/A"
+                
+                # Try mounting the ESP
+                if mount -t vfat -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                    local esp_details=($(df -P "$mount_point" | tail -1))
+                    if [ ${#esp_details[@]} -ge 5 ]; then
+                        esp_total=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+                        esp_used=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+                        esp_free=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
+                        esp_percent=${esp_details[4]%?}
+                    fi
+                    umount "$mount_point" 2>/dev/null
                 fi
-                umount "$mount_point" 2>/dev/null
-            fi
-            
-            # Cleanup
-            rmdir "$mount_point" 2>/dev/null
+                rmdir "$mount_point" 2>/dev/null
+                
+                local esp_status=$(get_drive_status "$esp_percent")
+                printf "   ${bold}ESP $esp_num${reset} [$esp_uuid]: ${esp_percent}%% full [${esp_used}/${esp_total} used, ${esp_free} free] - $esp_status\n"
+                esp_num=$((esp_num + 1))
+            done
+        else
+            printf " ${bold}Boot Disk (ESP):${reset} Unable to detect ESP partitions\n"
         fi
-        
-        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
-        local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk (ESP):${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     elif [ "$use_efi_grub" = true ]; then
         printf " ${bold}Boot Method:${reset} GRUB (EFI System Partition)\n"
         local boot_details=($(df -P "$efi_partition" 2>/dev/null | tail -1))
@@ -684,6 +679,9 @@ pve_kernel_clean() {
     latest_installed_kernel_ver=$(dpkg-query -W -f='${Package}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//' | sort -V | tail -n 1)
 
     local discovery_source
+    # Track which ESPs contain which kernel versions (for multi-ESP display)
+    local -A kernel_esp_map
+    
     if [ "$use_pbt" = true ]; then
         discovery_source="ESP"
         local esp_kernels=()
@@ -691,7 +689,7 @@ pve_kernel_clean() {
         local esp_uuids
         esp_uuids=($(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}'))
         
-        # Collect kernels from ALL ESPs and deduplicate
+        # Collect kernels from ALL ESPs and track locations
         for esp_uuid in "${esp_uuids[@]}"; do
             local mount_point="/var/tmp/pvekclean_esp_mount_${esp_uuid}_$$"
             mkdir -p "$mount_point"
@@ -699,6 +697,16 @@ pve_kernel_clean() {
                 # list kernels and strip the vmlinuz- prefix
                 local kernels_on_this_esp
                 kernels_on_this_esp=($(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p'))
+                
+                # Track which ESP contains each kernel
+                for k_ver in "${kernels_on_this_esp[@]}"; do
+                    if [ -z "${kernel_esp_map[$k_ver]}" ]; then
+                        kernel_esp_map[$k_ver]="$esp_uuid"
+                    else
+                        kernel_esp_map[$k_ver]="${kernel_esp_map[$k_ver]},$esp_uuid"
+                    fi
+                done
+                
                 esp_kernels+=("${kernels_on_this_esp[@]}")
                 umount "$mount_point"
                 rmdir "$mount_point"
@@ -872,11 +880,40 @@ pve_kernel_clean() {
 	printf "${bold}[-]${reset} Searching for old PVE kernels on your system (Source: $discovery_source)...
 "
 	printf "${bold}${green}[✓]${reset} Current kernel ($current_kernel) is ALWAYS protected from removal\n"
+	
+	# Show ESP info header if multi-ESP system
+	local show_esp_info=false
+	if [ "$use_pbt" = true ] && [ ${#esp_uuids[@]} -gt 1 ]; then
+		show_esp_info=true
+		printf "${bold}[*]${reset} Multi-ESP system detected (${#esp_uuids[@]} ESPs) - showing kernel locations:\n"
+	fi
+	
 	for kernel_pkg in "${kernel_packages_to_remove[@]}"; do
-		printf "  ${bold}${green}+${reset} \"$kernel_pkg\" added to the kernel remove list\n"
+		# Extract kernel version for ESP lookup
+		local pkg_version
+		pkg_version=$(echo "$kernel_pkg" | sed -n 's/.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//')
+		
+		# Show ESP location if multi-ESP and this is a kernel package (not headers)
+		if [ "$show_esp_info" = true ] && [[ "$kernel_pkg" == *"-kernel-"* ]] && [ -n "${kernel_esp_map[$pkg_version]}" ]; then
+			local esp_list="${kernel_esp_map[$pkg_version]}"
+			printf "  ${bold}${green}+${reset} \"$kernel_pkg\" [ESPs: $esp_list]\n"
+		else
+			printf "  ${bold}${green}+${reset} \"$kernel_pkg\"\n"
+		fi
 	done
+	
 	for kernel_pkg in "${kernels_to_keep[@]}"; do
-		printf "  ${bold}${red}-${reset} \"$kernel_pkg\" is being held back from removal\n"
+		# Extract kernel version for ESP lookup
+		local pkg_version
+		pkg_version=$(echo "$kernel_pkg" | sed -n 's/.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//')
+		
+		# Show ESP location if multi-ESP and this is a kernel package (not headers)
+		if [ "$show_esp_info" = true ] && [[ "$kernel_pkg" == *"-kernel-"* ]] && [ -n "${kernel_esp_map[$pkg_version]}" ]; then
+			local esp_list="${kernel_esp_map[$pkg_version]}"
+			printf "  ${bold}${red}-${reset} \"$kernel_pkg\" [ESPs: $esp_list] (kept)\n"
+		else
+			printf "  ${bold}${red}-${reset} \"$kernel_pkg\" (kept)\n"
+		fi
 	done
 	printf "${bold}[-]${reset} PVE kernel search complete!\n"
 
