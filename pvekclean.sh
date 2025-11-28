@@ -31,7 +31,7 @@ ______________________________________________
 '
 
 # Percentage of used space in the /boot which would consider it critically full
-boot_critical_percent="80"
+boot_critical_percent="95"
 
 # To check for updates or not
 check_for_updates=true
@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.5"
+version="2.0.6"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -230,17 +230,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;
+			;; 
 			2)
 				cron_time="weekly"
-			;;
+			;; 
 			3)
 				cron_time="monthly"
-			;;
+			;; 
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;
+			;; 
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -376,6 +376,21 @@ pve_kernel_clean() {
 			kernel_packages_to_remove+=("$kernel_headers_pkg")
 		fi
 	done
+
+	# Check for critically full boot partition
+    if [ "${boot_info[4]}" -gt "$boot_critical_percent" ]; then
+        printf "\n${bold}${red}[!] FATAL: /boot partition is critically full!${reset}\n"
+        printf "Automated cleanup cannot proceed safely.\n"
+        printf "Please manually remove one old kernel to free up space.\n"
+        printf "For example:\n"
+        if [ ${#kernel_packages_to_remove[@]} -gt 0 ]; then
+            printf "  ${cyan}apt-get remove ${kernel_packages_to_remove[0]}${reset}\n"
+        else
+            printf "  ${cyan}apt-get remove <old-kernel-package-name>${reset}\n"
+        fi
+        printf "Then run pvekclean again.\n"
+        exit 1
+    fi
 
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
@@ -525,22 +540,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;;
+		;; 
 		-r|--remove )
 			main
 			uninstall_program
-		;;
+		;; 
 		-s|--scheduler)
 			main
 			scheduler
-		;;
+		;; 
 		-v|--version)
 			version
-		;;
+		;; 
 		-h|--help)
 			main
 			exit 0
-		;;
+		;; 
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -550,26 +565,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;;
+		;; 
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;;
+		;; 
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;;
+		;; 
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;;
+		;; 
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;;
+		;; 
 esac
     shift
 done
