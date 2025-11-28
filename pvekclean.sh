@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.8"
+version="2.2.9"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -499,86 +499,90 @@ uninstall_program() {
 remove_orphaned_esp_kernels() {
     [ "$use_pbt" != true ] && return
     
-    local esp_uuid
-    esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+    # Get ALL ESP UUIDs, not just the first one
+    local esp_uuids
+    esp_uuids=($(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}'))
     
-    if [ -z "$esp_uuid" ]; then
+    if [ ${#esp_uuids[@]} -eq 0 ]; then
         return
     fi
 
-    local mount_point="/var/tmp/pvekclean_esp_orphans_$$"
-    mkdir -p "$mount_point"
-    
-    if ! mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
-        rmdir "$mount_point"
-        return
-    fi
-
-    local esp_kernels
-    esp_kernels=$(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p')
-    
-    # We need to unmount here because we might need to mount RW later to delete
-    umount "$mount_point"
-    rmdir "$mount_point"
-
-    local orphans=()
-    
-    for k_ver in $esp_kernels; do
-        # Skip running kernel
-        if [[ "$k_ver" == "$current_kernel" ]]; then
+    # Process each ESP separately
+    for esp_uuid in "${esp_uuids[@]}"; do
+        local mount_point="/var/tmp/pvekclean_esp_orphans_${esp_uuid}_$$"
+        mkdir -p "$mount_point"
+        
+        if ! mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+            rmdir "$mount_point"
             continue
         fi
 
-        local is_installed=false
-        # Check if any package owns this kernel version (check both regular and -signed variants)
-        for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
-             for pkg_suffix in "" "-signed"; do
-                 if dpkg-query -W -f='${Status}' "${pkg_prefix}${k_ver}${pkg_suffix}" 2>/dev/null | grep -q "ok installed"; then
-                     is_installed=true
-                     break 2
-                 fi
-             done
-        done
+        local esp_kernels
+        esp_kernels=$(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p')
         
-        if [ "$is_installed" = false ]; then
-            orphans+=("$k_ver")
+        # We need to unmount here because we might need to mount RW later to delete
+        umount "$mount_point"
+        rmdir "$mount_point"
+
+        local orphans=()
+        
+        for k_ver in $esp_kernels; do
+            # Skip running kernel
+            if [[ "$k_ver" == "$current_kernel" ]]; then
+                continue
+            fi
+
+            local is_installed=false
+            # Check if any package owns this kernel version (check both regular and -signed variants)
+            for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
+                 for pkg_suffix in "" "-signed"; do
+                     if dpkg-query -W -f='${Status}' "${pkg_prefix}${k_ver}${pkg_suffix}" 2>/dev/null | grep -q "ok installed"; then
+                         is_installed=true
+                         break 2
+                     fi
+                 done
+            done
+            
+            if [ "$is_installed" = false ]; then
+                orphans+=("$k_ver")
+            fi
+        done
+
+        if [ ${#orphans[@]} -gt 0 ]; then
+            printf "\n${bold}[-]${reset} Detected ${#orphans[@]} orphaned kernel(s) on ESP ${esp_uuid} (files exist, but package is gone):\n"
+            for orphan in "${orphans[@]}"; do
+                printf "  ${bold}${orange}?${reset} vmlinuz-$orphan\n"
+            done
+            
+            if [ "$force_purge" = false ]; then
+                 printf "${bold}[*]${reset} Do you want to remove these orphaned files from ESP ${esp_uuid}? [y/N]: "
+                 read -n 1 -r
+                 printf "\n"
+                 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                     printf "${bold}[-]${reset} Skipping orphan cleanup for ESP ${esp_uuid}.\n"
+                     continue
+                 fi
+            fi
+
+            # Mount RW to delete
+            mkdir -p "$mount_point"
+            if mount /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                 for orphan in "${orphans[@]}"; do
+                     if [ "$dry_run" != "true" ]; then
+                         rm -f "$mount_point/vmlinuz-$orphan"
+                         rm -f "$mount_point/initrd.img-$orphan"
+                         printf "  ${bold}${green}✓${reset} Removed orphan from ESP ${esp_uuid}: $orphan\n"
+                     else
+                         printf "  Dry run: Would remove vmlinuz-$orphan and initrd.img-$orphan from ESP ${esp_uuid}\n"
+                     fi
+                 done
+                 umount "$mount_point"
+            else
+                 printf "${bold}${red}[!]${reset} Failed to mount ESP ${esp_uuid} for writing.\n"
+            fi
+            rmdir "$mount_point"
         fi
     done
-
-    if [ ${#orphans[@]} -gt 0 ]; then
-        printf "\n${bold}[-]${reset} Detected ${#orphans[@]} orphaned kernel(s) on ESP (files exist, but package is gone):\n"
-        for orphan in "${orphans[@]}"; do
-            printf "  ${bold}${orange}?${reset} vmlinuz-$orphan\n"
-        done
-        
-        if [ "$force_purge" = false ]; then
-             printf "${bold}[*]${reset} Do you want to remove these orphaned files? [y/N]: "
-             read -n 1 -r
-             printf "\n"
-             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                 printf "${bold}[-]${reset} Skipping orphan cleanup.\n"
-                 return
-             fi
-        fi
-
-        # Mount RW to delete
-        mkdir -p "$mount_point"
-        if mount /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
-             for orphan in "${orphans[@]}"; do
-                 if [ "$dry_run" != "true" ]; then
-                     rm -f "$mount_point/vmlinuz-$orphan"
-                     rm -f "$mount_point/initrd.img-$orphan"
-                     printf "  ${bold}${green}✓${reset} Removed orphan: $orphan\n"
-                 else
-                     printf "  Dry run: Would remove vmlinuz-$orphan and initrd.img-$orphan\n"
-                 fi
-             done
-             umount "$mount_point"
-        else
-             printf "${bold}${red}[!]${reset} Failed to mount ESP for writing.\n"
-        fi
-        rmdir "$mount_point"
-    fi
 }
 
 
@@ -683,16 +687,29 @@ pve_kernel_clean() {
     if [ "$use_pbt" = true ]; then
         discovery_source="ESP"
         local esp_kernels=()
-        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
-        if [ -n "$esp_uuid" ]; then
-            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+        # Get ALL ESP UUIDs, not just the first one
+        local esp_uuids
+        esp_uuids=($(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}'))
+        
+        # Collect kernels from ALL ESPs and deduplicate
+        for esp_uuid in "${esp_uuids[@]}"; do
+            local mount_point="/var/tmp/pvekclean_esp_mount_${esp_uuid}_$$"
             mkdir -p "$mount_point"
             if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
                 # list kernels and strip the vmlinuz- prefix
-                esp_kernels=($(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p'))
+                local kernels_on_this_esp
+                kernels_on_this_esp=($(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p'))
+                esp_kernels+=("${kernels_on_this_esp[@]}")
                 umount "$mount_point"
                 rmdir "$mount_point"
+            else
+                rmdir "$mount_point"
             fi
+        done
+        
+        # Deduplicate kernel list
+        if [ ${#esp_kernels[@]} -gt 0 ]; then
+            esp_kernels=($(printf "%s\n" "${esp_kernels[@]}" | sort -u))
         fi
         
         for k_ver in "${esp_kernels[@]}"; do
@@ -940,6 +957,11 @@ pve_kernel_clean() {
 				fi
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
+			
+			# Suggest running apt autoremove to clean up orphaned dependencies (not in dry-run)
+			if [ "$dry_run" != "true" ]; then
+				printf "\n${bold}[*]${reset} Tip: Run '${bold}apt autoremove${reset}' to remove any orphaned dependencies left behind.\n"
+			fi
 			
 			# Script finished successfully
 			printf "${bold}[-]${reset} Have a nice $(timeGreeting) ⎦˚◡˚⎣\n"
