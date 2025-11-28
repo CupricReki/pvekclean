@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.4"
+version="2.0.5"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -230,17 +230,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;i
+			;;
 			2)
 				cron_time="weekly"
-			;;i
+			;;
 			3)
 				cron_time="monthly"
-			;;i
+			;;
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;i
+			;;
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -525,7 +525,7 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		        ;;
+		;;
 		-r|--remove )
 			main
 			uninstall_program
