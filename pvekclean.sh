@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.3"
+version="2.0.4"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -99,17 +99,16 @@ version() {
 
 # Header for PVE Kernel Cleaner
 header_info() {
-echo -e " ${bg_black}${orange}                                                ${reset}
- ${bg_black}${orange}   █▀▀█ ▀█ █▀ █▀▀   █ █ █▀▀ █▀▀█ █▀▀▄ █▀▀ █     ${reset}
+echo -e " ${bg_black}${orange}                                                ${reset} \
+ ${bg_black}${orange}   █▀▀█ ▀█ █▀ █▀▀   █ █ █▀▀ █▀▀█ █▀▀▄ █▀▀ █     ${reset} \
  ${bg_black}${orange}   █  █  █▄█  █▀▀   █▀▄ █▀▀ █▄▄▀ █  █ █▀▀ █     ${reset} 
- ${bg_black}${orange}   █▀▀▀   ▀   ▀▀▀   ▀ ▀ ▀▀▀ ▀ ▀▀ ▀  ▀ ▀▀▀ ▀▀▀   ${reset}
- ${bg_black}${orange}                                                ${reset}
- ${bg_black}${white}   █▀▀ █   █▀▀ █▀▀█ █▀▀▄ █▀▀ █▀▀█               ${reset}
- ${bg_black}${white}   █   █   █▀▀ █▄▄█ █  █ █▀▀ █▄▄▀  ${white}${bold}⎦˚◡˚⎣ v$version ${reset}
- ${bg_black}${white}   ▀▀▀ ▀▀▀ ▀▀▀ ▀  ▀ ▀  ▀ ▀▀▀ ▀ ▀▀               ${reset}
+ ${bg_black}${orange}   █▀▀▀   ▀   ▀▀▀   ▀ ▀ ▀▀▀ ▀ ▀▀ ▀  ▀ ▀▀▀ ▀▀▀   ${reset} \
+ ${bg_black}${orange}                                                ${reset} \
+ ${bg_black}${white}   █▀▀ █   █▀▀ █▀▀█ █▀▀▄ █▀▀ █▀▀█               ${reset} \
+ ${bg_black}${white}   █   █   █▀▀ █▄▄█ █  █ █▀▀ █▄▄▀  ${white}${bold}⎦˚◡˚⎣ v$version ${reset} \
+ ${bg_black}${white}   ▀▀▀ ▀▀▀ ▀▀▀ ▀  ▀ ▀  ▀ ▀▀▀ ▀ ▀▀               ${reset} \
  ${bg_orange}${black}      ${bold}By Jordan Hillis [jordan@hillis.email]    ${reset}
-___________________________________________
-"
+___________________________________________"
 if [ "$dry_run" == "true" ]; then
 	printf "          ${bg_yellow}${black}${bold}    DRY RUN MODE IS: ${red}ON    ${reset}\n"
 	printf "${bg_green}${bold}${black} This is what the script would do in regular mode ${reset}\n${bg_green}${bold}${black}      (but without making actual changes)         ${reset}\n\n"
@@ -139,7 +138,7 @@ kernel_info() {
 	latest_kernel=$(dpkg --list | awk '/proxmox-kernel-.*-pve/{print $2}' | sed -n 's/proxmox-kernel-//p' | sort -V | tail -n 1 | tr -d '[:space:]')
 	[ -z "$latest_kernel" ] && latest_kernel="N/A"
 	# Show operating system used
-	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/["]//g' | awk '{print $0}')\n"
+	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ "]//g' | awk '{print $0}')\n"
 	# Get information about the /boot folder
 	boot_info=($(echo $(df -Ph | grep /boot | tail -1) | sed 's/%//g'))
 	# Show information about the /boot
@@ -154,7 +153,8 @@ kernel_info() {
 		fi
 	# Warn them that they aren't on a PVE kernel
 	else
-		printf "___________________________________________\n\n"
+		printf "___________________________________________
+\n"
 		printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
 		# Ask them if they want to continue
 		printf "${bold}[*]${reset} Would you like to continue [y/N] "
@@ -169,7 +169,8 @@ kernel_info() {
 			exit 0
 		fi
 	fi
-	printf "___________________________________________\n\n"
+	printf "___________________________________________
+\n"
 }
 
 # Usage information on how to use PVE Kernel Clean
@@ -186,7 +187,8 @@ show_usage() {
 		printf "  -r, --remove          Uninstall $program_name from the system\n"
 		printf "  -i, --install         Install $program_name to the system\n"
 		printf "  -d, --dry-run         Run the program in dry run mode for testing without making system changes\n"
-		printf "___________________________________________\n\n"
+		printf "___________________________________________
+\n"
 	fi
 }
 
@@ -208,7 +210,7 @@ scheduler() {
 	# Cronjob exists
 	if [ -n "$check_cron_exists" ]; then
 		# Get the current cronjob scheduling
-		cron_current=$(crontab -l | grep "$program_name" | sed "s/[^a-zA-Z']/ /g" | sed -e "s/\b\(.\)/\u\1/g" | awk '{print $1;}')
+		cron_current=$(crontab -l | grep "$program_name" | sed "s/[^a-zA-Z']/ /g" | sed -e "s/\b(.)/\u\1/g" | awk '{print $1;}')
 		# Ask the user if they would like to remove the scheduling
 		printf "${bold}[-]${reset} Would you like to remove the currently scheduled PVE Kernel Cleaner? (Current: $cron_current) [y/N] "
 		read -n 1 -r
@@ -228,17 +230,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;
+			;;i
 			2)
 				cron_time="weekly"
-			;;
+			;;i
 			3)
 				cron_time="monthly"
-			;;
+			;;i
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;
+			;;i
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -365,7 +367,7 @@ pve_kernel_clean() {
 		fi
 
 		# Add kernel to the list of removal
-		kernels_to_remove+=("$kernel_version")
+	kernels_to_remove+=("$kernel_version")
 		kernel_packages_to_remove+=("$kernel_pkg")
 
 		# Also add headers to the removal list
@@ -461,7 +463,7 @@ pve_kernel_clean() {
 check_for_update() {
 	if [ "$check_for_updates" == "true" ] && [ "$force_purge" == "false" ]; then
 		# Get latest version number
-		local remote_version=$(curl -s -m 10 https://raw.githubusercontent.com/jordanhillis/pvekclean/master/version.txt | tr -d '\n' || echo "")
+		local remote_version=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/version.txt | tr -d '\n' || echo "")
 		# Unable to fetch remote version, so just skip the update check
 		if [ -z "$remote_version" ]; then
 			printf "${bold}[*]${reset} Failed to check for updates. Skipping update check.\n"
@@ -479,7 +481,7 @@ check_for_update() {
 			read -n 1 -r
 			printf "\n"
 			if [[ $REPLY =~ ^[Yy]$ ]]; then
-				local updated_script=$(curl -s -m 10 https://raw.githubusercontent.com/jordanhillis/pvekclean/master/pvekclean.sh)
+				local updated_script=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/pvekclean.sh)
 				# Check if the updated script contains the shebang line
 				if [[ "$updated_script" == "#!/bin/bash"* ]]; then
 					echo "$updated_script" > "$0"  # Overwrite the current script
@@ -523,22 +525,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;;
+		;;i
 		-r|--remove )
 			main
 			uninstall_program
-		;;
+		;;i
 		-s|--scheduler)
 			main
 			scheduler
-		;;
+		;;i
 		-v|--version)
 			version
-		;;
+		;;i
 		-h|--help)
 			main
 			exit 0
-		;;
+		;;i
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -548,27 +550,27 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;;
+		;;i
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;;
+		;;i
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;;	
+		;;i	
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;;				
+		;;i							
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;;
-    esac
+		;;i
+esac
     shift
 done
 
