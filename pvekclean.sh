@@ -527,8 +527,7 @@ while [[ $# -gt 0 ]]; do
 			install_program
 		        ;;
 		        -r|--remove )			main
-			uninstall_program
-		;;i
+		;;
 		-s|--scheduler)
 			main
 			scheduler
