@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.1"
+version="2.2.2"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -325,6 +325,7 @@ show_usage() {
 		printf "  -r, --remove          Uninstall $program_name from the system\n"
 		printf "  -i, --install         Install $program_name to the system\n"
 		printf "  -d, --dry-run         Run the program in dry run mode for testing without making system changes\n"
+		printf "___________________________________________\n"
 	fi
 }
 
