@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.5"
+version="2.2.6"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -511,17 +511,19 @@ remove_orphaned_esp_kernels() {
     
     for k_ver in $esp_kernels; do
         # Skip running kernel
-        if [[ "$current_kernel" == *"$k_ver"* ]]; then
+        if [[ "$k_ver" == "$current_kernel" ]]; then
             continue
         fi
 
         local is_installed=false
-        # Check if any package owns this kernel version
+        # Check if any package owns this kernel version (check both regular and -signed variants)
         for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
-             if dpkg-query -W -f='${Status}' "${pkg_prefix}${k_ver}" 2>/dev/null | grep -q "ok installed"; then
-                 is_installed=true
-                 break
-             fi
+             for pkg_suffix in "" "-signed"; do
+                 if dpkg-query -W -f='${Status}' "${pkg_prefix}${k_ver}${pkg_suffix}" 2>/dev/null | grep -q "ok installed"; then
+                     is_installed=true
+                     break 2
+                 fi
+             done
         done
         
         if [ "$is_installed" = false ]; then
@@ -685,14 +687,17 @@ pve_kernel_clean() {
             fi
             # Construct potential package names and check if they exist
             for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
-                 pkg_name="${pkg_prefix}${k_ver}"
-                 if dpkg-query -W -f='${Status}' "$pkg_name" 2>/dev/null | grep -q "ok installed"; then
-                     kernel_packages_to_remove+=("$pkg_name")
-                     headers_pkg_name=$(echo "$pkg_name" | sed 's/kernel/headers/')
-                     if dpkg-query -W -f='${Status}' "$headers_pkg_name" 2>/dev/null | grep -q "ok installed"; then
-                         kernel_packages_to_remove+=("$headers_pkg_name")
+                 # Check both regular and -signed variants
+                 for pkg_suffix in "" "-signed"; do
+                     pkg_name="${pkg_prefix}${k_ver}${pkg_suffix}"
+                     if dpkg-query -W -f='${Status}' "$pkg_name" 2>/dev/null | grep -q "ok installed"; then
+                         kernel_packages_to_remove+=("$pkg_name")
+                         headers_pkg_name=$(echo "$pkg_name" | sed 's/kernel/headers/')
+                         if dpkg-query -W -f='${Status}' "$headers_pkg_name" 2>/dev/null | grep -q "ok installed"; then
+                             kernel_packages_to_remove+=("$headers_pkg_name")
+                         fi
                      fi
-                 fi
+                 done
             done
         done
     else
@@ -701,7 +706,7 @@ pve_kernel_clean() {
         installed_kernel_packages=$(dpkg --list | grep -E '^(ii|ri|ui|hi).*(pve|proxmox)-kernel-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve' | awk '{print $2}')
         for kernel_pkg in $installed_kernel_packages; do
             local kernel_version
-            kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
+            kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//')
 
             # Always skip running kernel
             if [[ "$kernel_version" == "$current_kernel" ]]; then
