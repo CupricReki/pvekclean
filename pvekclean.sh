@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.4"
+version="2.2.5"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -397,6 +397,11 @@ scheduler() {
 
 # Installs PVE Kernel Cleaner for easier access
 install_program() {
+	# Skip installation prompts in dry-run mode to avoid mutating the system
+	if [ "$dry_run" = "true" ]; then
+		return
+	fi
+	
 	force_pvekclean_update=false
     local tmp_file="/tmp/.pvekclean_install_lock"
     local install=false
@@ -699,11 +704,11 @@ pve_kernel_clean() {
             kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
 
             # Always skip running kernel
-            if [[ "$current_kernel" == *"$kernel_version"* ]]; then
+            if [[ "$kernel_version" == "$current_kernel" ]]; then
                 continue
             fi
             # Skip latest kernel unless --remove-newer is set
-            if [[ "$latest_installed_kernel_ver" == *"$kernel_version"* ]]; then
+            if [[ "$kernel_version" == "$latest_installed_kernel_ver" ]]; then
                 continue
             fi
             # Skip kernels newer than current unless --remove-newer is set
@@ -773,6 +778,13 @@ pve_kernel_clean() {
     fi
 
     local kernels_to_keep=()
+	
+	# Apply default kernel retention if not explicitly set
+	if [[ -z "$keep_kernels" ]]; then
+		keep_kernels=1
+		printf "${bold}[*]${reset} No --keep value specified. Defaulting to keep at least ${bold}1${reset} additional kernel for safety.\n"
+	fi
+	
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
 		if [ "$keep_kernels" -gt 0 ]; then
@@ -907,6 +919,11 @@ pve_kernel_clean() {
 
 # Function to check for updates
 check_for_update() {
+    # Skip update checks in dry-run mode to avoid mutating the system
+    if [ "$dry_run" = "true" ]; then
+        return
+    fi
+    
     # Check if running from within a git repository
     if git -C "$(dirname "$0")" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         local remote_version
@@ -996,46 +1013,46 @@ while [[ $# -gt 0 ]]; do
 		check_root
 		uninstall_program
 	;;
-		-s|--scheduler)
-			main
-			scheduler
-		;;
-		-v|--version)
-			version
-		;;
-		-h|--help)
-			main
-			exit 0
-		;;
-		-k|--keep)
-			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
-                keep_kernels="$2"
-                shift 2
-				continue
-            else
-                echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
-                exit 1
-            fi
-		;;
-		-f|--force)
-			force_purge=true
-			shift
+	-s|--scheduler)
+		main
+		scheduler
+	;;
+	-v|--version)
+		version
+	;;
+	-h|--help)
+		main
+		exit 0
+	;;
+	-k|--keep)
+		if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
+			keep_kernels="$2"
+			shift 2
 			continue
-		;;
-		-rn|--remove-newer)
-			remove_newer=true
-			shift
-			continue
-		;;
-		-d|--dry-run)
-			dry_run=true
-			shift
-			continue
-		;;
-		*)
-			echo -e "${bold}Unknown option:${reset} $1"
+		else
+			echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
 			exit 1
-		;;
+		fi
+	;;
+	-f|--force)
+		force_purge=true
+		shift
+		continue
+	;;
+	-rn|--remove-newer)
+		remove_newer=true
+		shift
+		continue
+	;;
+	-d|--dry-run)
+		dry_run=true
+		shift
+		continue
+	;;
+	*)
+		echo -e "${bold}Unknown option:${reset} $1"
+		exit 1
+	;;
 esac
     shift
 done

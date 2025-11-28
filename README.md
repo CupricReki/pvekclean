@@ -2,7 +2,7 @@
 
 Easily remove old/unused PVE kernels on your Proxmox VE system
 
-[![Version](https://img.shields.io/badge/Version-v2.2.1-brightgreen)](https://github.com/CupricReki/pvekclean)
+[![Version](https://img.shields.io/badge/Version-v2.2.5-brightgreen)](https://github.com/CupricReki/pvekclean)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
 ![Updated](https://img.shields.io/github/last-commit/CupricReki/pvekclean)
 ![Proxmox](https://img.shields.io/badge/-Proxmox-orange)
@@ -36,7 +36,13 @@ PVE Kernel Cleaner is a program to compliment Proxmox Virtual Environment which 
 
 ## Latest Version
 
-* **v2.2.1** - Major security and safety improvements ([see audit](SECURITY_AUDIT.md))
+* **v2.2.5** - Critical bug fixes and script continuation improvements
+  - Fixed substring matching bug that could cause incorrect kernel identification
+  - Fixed script exit after install/update (now continues to kernel cleanup)
+  - Fixed `-r/--remove` flag not working properly
+  - Added true dry-run mode (blocks all system mutations including updates/installs)
+  - Added default retention of 1 kernel for safety when `--keep` not specified
+  - Improved code quality and consistency
 
 ## Prerequisites
 
