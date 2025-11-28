@@ -101,7 +101,7 @@ version() {
 header_info() {
 echo -e " ${bg_black}${orange}                                                ${reset} \
  ${bg_black}${orange}   █▀▀█ ▀█ █▀ █▀▀   █ █ █▀▀ █▀▀█ █▀▀▄ █▀▀ █     ${reset} \
- ${bg_black}${orange}   █  █  █▄█  █▀▀   █▀▄ █▀▀ █▄▄▀ █  █ █▀▀ █     ${reset} 
+ ${bg_black}${orange}   █  █  █▄█  █▀▀   █▀▄ █▀▀ █▄▄▀ █  █ █▀▀ █     ${reset} \
  ${bg_black}${orange}   █▀▀▀   ▀   ▀▀▀   ▀ ▀ ▀▀▀ ▀ ▀▀ ▀  ▀ ▀▀▀ ▀▀▀   ${reset} \
  ${bg_black}${orange}                                                ${reset} \
  ${bg_black}${white}   █▀▀ █   █▀▀ █▀▀█ █▀▀▄ █▀▀ █▀▀█               ${reset} \
@@ -173,7 +173,7 @@ kernel_info() {
 
 	# Latest kernel installed - extract from package names, not version field
 	local latest_installed_kernel_ver
-    latest_installed_kernel_ver=$(dpkg-query -W -f='${Package}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sort -V | tail -n 1)
+    latest_installed_kernel_ver=$(dpkg-query -W -f='${Package}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//' | sort -V | tail -n 1)
 	[ -z "$latest_installed_kernel_ver" ] && latest_installed_kernel_ver="N/A"
 
     printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ \\"]//g' | awk '{print $0}')\n"
@@ -635,7 +635,7 @@ pve_kernel_clean() {
 
     local kernel_packages_to_remove=()
     local latest_installed_kernel_ver
-    latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
+    latest_installed_kernel_ver=$(dpkg-query -W -f='${Package}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sed 's/-signed$//' | sort -V | tail -n 1)
 
     local discovery_source
     if [ "$use_pbt" = true ]; then
