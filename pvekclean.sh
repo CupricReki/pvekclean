@@ -383,7 +383,9 @@ pve_kernel_clean() {
 			# Number of kernels to remove from the end of the list
 			num_to_keep=$((keep_kernels * 2)) # x2 because of kernel and headers
 
-			if [ "$num_to_keep" -ge "${#kernel_packages_to_remove[@]}" ]; then num_to_keep=${#kernel_packages_to_remove[@]}; fi
+			if [ "$num_to_keep" -ge "${#kernel_packages_to_remove[@]}" ]; then
+				num_to_keep=${#kernel_packages_to_remove[@]}
+			fi
 			
 			kernels_to_keep=("${kernel_packages_to_remove[@]:${#kernel_packages_to_remove[@]}-$num_to_keep}")
 			kernel_packages_to_remove=("${kernel_packages_to_remove[@]::${#kernel_packages_to_remove[@]}-$num_to_keep}")
