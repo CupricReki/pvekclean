@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.8"
+version="2.0.9"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -460,8 +460,8 @@ pve_kernel_clean() {
 				printf "Dry run: Would have run 'apt-get purge -y ${kernel_packages_to_remove[*]}'\n"
 			fi
 
-			printf "${bold}[*]${reset} Updating GRUB..."
-			# Update grub after kernels are removed
+			printf "${bold}[*]${reset} Updating bootloader..."
+			# Update bootloader after kernels are removed
 			if [ "$dry_run" != "true" ]; then
                 if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
                     /usr/sbin/proxmox-boot-tool refresh
@@ -469,13 +469,22 @@ pve_kernel_clean() {
                         printf "${bold}[!]${reset} Error updating bootloader with proxmox-boot-tool.\n"
                     fi
                 else
+                    printf "${bold}[*]${reset} Would you like to run update-initramfs? [y/N]: "
+                    read -n 1 -r
+                    printf "\n"
+                    if [[ $REPLY =~ ^[Yy]$ ]]; then
+                        /usr/sbin/update-initramfs -u
+                        if [ $? -ne 0 ]; then
+                            printf "${bold}[!]${reset} Error updating initramfs.\n"
+                        fi
+                    fi
 				    /usr/sbin/update-grub
 				    if [ $? -ne 0 ]; then
 					    printf "${bold}[!]${reset} Error updating GRUB.\n"
 				    fi
                 fi
 			else
-				printf "Dry run: Would have run 'proxmox-boot-tool refresh' or 'update-grub'\n"
+				printf "Dry run: Would have run 'proxmox-boot-tool refresh' or 'update-grub' and optionally 'update-initramfs'\n"
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
 			# Get information about the /boot folder
