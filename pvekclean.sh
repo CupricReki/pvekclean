@@ -193,7 +193,7 @@ kernel_info() {
         fi
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     elif [ "$use_grub" = true ]; then
         printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
         local boot_details=($(df -P /boot 2>/dev/null | tail -1))
@@ -209,7 +209,7 @@ kernel_info() {
         fi
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     else
         # No supported bootloader detected
         printf " ${bold}Boot Method:${reset} ${red}UNKNOWN/UNSUPPORTED${reset}\n"
@@ -219,9 +219,11 @@ kernel_info() {
 
 
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
+	printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
+    printf "___________________________________________\n"
+    
     # Check if we are running the latest kernel, if not warn
     if [[ "$latest_installed_kernel_ver" != "$current_kernel" ]]; then
-        printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
         printf "\n${bold}${yellow}[!] WARNING:${reset} You are NOT booted into the latest kernel!\n"
         printf "${bold}[!]${reset} Current: $current_kernel\n"
         printf "${bold}[!]${reset} Latest:  ${latest_installed_kernel_ver}\n"
@@ -243,9 +245,7 @@ kernel_info() {
     fi
 
     if [[ "$current_kernel" != *"pve"* ]]; then
-        printf "___________________________________________
-"
-        printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
+        printf "${bold}${yellow}[!] WARNING:${reset} You're not running a PVE kernel\n"
         printf "${bold}[*]${reset} Would you like to continue [y/N] "
         read -n 1 -r
         printf "\n"
@@ -256,8 +256,6 @@ kernel_info() {
             exit 0
         fi
     fi
-	printf "___________________________________________
-"
 }
 
 # Usage information on how to use PVE Kernel Clean
