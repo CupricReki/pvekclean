@@ -156,9 +156,9 @@ kernel_info() {
         fi
     fi
 
-	# Lastest kernel installed
+	# Latest kernel installed - extract from package names, not version field
 	local latest_installed_kernel_ver
-    latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
+    latest_installed_kernel_ver=$(dpkg-query -W -f='${Package}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/^.*-kernel-\(.*\)$/\1/p' | sort -V | tail -n 1)
 	[ -z "$latest_installed_kernel_ver" ] && latest_installed_kernel_ver="N/A"
 
     printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ \\"]//g' | awk '{print $0}')\n"
@@ -166,33 +166,45 @@ kernel_info() {
     # Display detected bootloader
     if [ "$use_pbt" = true ]; then
         printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
-        local esp_uuid
-        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        
         local boot_total_h="N/A"
         local boot_used_h="N/A"
         local boot_free_h="N/A"
         local boot_percent="N/A"
+        local esp_mounted=false
+        local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+        
+        # Try to get ESP UUID from proxmox-boot-tool
+        local esp_uuid
+        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        
         if [ -n "$esp_uuid" ]; then
-            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
             mkdir -p "$mount_point"
-            if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
-                # Verify mount succeeded by checking if it's actually mounted
-                if mountpoint -q "$mount_point" 2>/dev/null; then
-                    local boot_details=($(df -P "$mount_point" | tail -1))
-                    if [ ${#boot_details[@]} -ge 5 ]; then
-                        boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
-                        boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
-                        boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
-                        boot_percent=${boot_details[4]%?}
-                    fi
+            
+            # Try mounting by UUID
+            if mount -t vfat -o ro UUID="$esp_uuid" "$mount_point" 2>/dev/null; then
+                esp_mounted=true
+            # Fallback: try /dev/disk/by-uuid path
+            elif [ -e "/dev/disk/by-uuid/$esp_uuid" ] && mount -o ro "/dev/disk/by-uuid/$esp_uuid" "$mount_point" 2>/dev/null; then
+                esp_mounted=true
+            fi
+            
+            # If mounted, get stats
+            if [ "$esp_mounted" = true ] && mountpoint -q "$mount_point" 2>/dev/null; then
+                local boot_details=($(df -P "$mount_point" | tail -1))
+                if [ ${#boot_details[@]} -ge 5 ]; then
+                    boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+                    boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+                    boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
+                    boot_percent=${boot_details[4]%?}
                 fi
                 umount "$mount_point" 2>/dev/null
-                rmdir "$mount_point" 2>/dev/null
-            else
-                # Mount failed, clean up
-                rmdir "$mount_point" 2>/dev/null
             fi
+            
+            # Cleanup
+            rmdir "$mount_point" 2>/dev/null
         fi
+        
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk (ESP):${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
@@ -211,7 +223,7 @@ kernel_info() {
         fi
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     else
         # No supported bootloader detected
         printf " ${bold}Boot Method:${reset} ${red}UNKNOWN/UNSUPPORTED${reset}\n"
@@ -221,9 +233,11 @@ kernel_info() {
 
 
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
+	printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
+    printf "___________________________________________\n"
+    
     # Check if we are running the latest kernel, if not warn
-    if [[ "$latest_installed_kernel_ver" != *"$current_kernel"* ]]; then
-        printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
+    if [[ "$latest_installed_kernel_ver" != "$current_kernel" ]]; then
         printf "\n${bold}${yellow}[!] WARNING:${reset} You are NOT booted into the latest kernel!\n"
         printf "${bold}[!]${reset} Current: $current_kernel\n"
         printf "${bold}[!]${reset} Latest:  ${latest_installed_kernel_ver}\n"
@@ -245,9 +259,7 @@ kernel_info() {
     fi
 
     if [[ "$current_kernel" != *"pve"* ]]; then
-        printf "___________________________________________
-"
-        printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
+        printf "${bold}${yellow}[!] WARNING:${reset} You're not running a PVE kernel\n"
         printf "${bold}[*]${reset} Would you like to continue [y/N] "
         read -n 1 -r
         printf "\n"
