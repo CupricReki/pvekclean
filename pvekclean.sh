@@ -168,7 +168,7 @@ kernel_info() {
                 rmdir "$mount_point"
             fi
         fi
-        local boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
     else
@@ -184,7 +184,7 @@ kernel_info() {
             boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
             boot_percent=${boot_details[4]%?}
         fi
-        local boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
     fi
@@ -196,7 +196,7 @@ kernel_info() {
         printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
     fi
 
-    if [[ \"$current_kernel\" != *\"pve\"* ]]; then
+    if [[ "$current_kernel" != *"pve"* ]]; then
         printf "___________________________________________
 "
         printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
@@ -271,17 +271,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;; 
+			;;
 			2)
 				cron_time="weekly"
-			;; 
+			;;
 			3)
 				cron_time="monthly"
-			;; 
+			;;
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;; 
+			;;
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -437,10 +437,6 @@ recover_esp_space() {
 
 # PVE Kernel Clean main function
 pve_kernel_clean() {
-    local use_pbt=false
-    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
-        use_pbt=true
-    fi
 
     # --- Kernel Discovery ---
     local kernel_packages_to_remove=()
@@ -448,7 +444,7 @@ pve_kernel_clean() {
     latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
 
     local discovery_source
-    if [ "$use_pbt" = true ]; then
+    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
         discovery_source="ESP"
         local esp_kernels=()
         esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
@@ -613,6 +609,17 @@ pve_kernel_clean() {
 
 # Function to check for updates
 check_for_update() {
+    # Check if running from within a git repository
+    if git -C "$(dirname "$0")" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        local remote_version
+        remote_version=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/version.txt | tr -d '\n' || echo "")
+        if [ -n "$remote_version" ] && [ "$remote_version" != "$version" ]; then
+            printf "*** A new version $remote_version is available! ***\n"
+            printf "${bold}[*]${reset} Please update by running 'git pull' in the repository.\n"
+        fi
+        return
+    fi
+    
 	if [ "$check_for_updates" == "true" ] && [ "$force_purge" == "false" ]; then
 		# Get latest version number
 		local remote_version
@@ -646,9 +653,6 @@ check_for_update() {
 					printf "${bold}[*]${reset} Update aborted!\n"
 				fi
 			fi
-			# if [ -n "$force_pvekclean_install" ]; then
-			# 	exit 0
-			# fi
 		fi
 	fi
 }
@@ -683,22 +687,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;; 
+		;;
 		-r|--remove )
 			main
 			uninstall_program
-		;; 
+		;;
 		-s|--scheduler)
 			main
 			scheduler
-		;; 
+		;;
 		-v|--version)
 			version
-		;; 
+		;;
 		-h|--help)
 			main
 			exit 0
-		;; 
+		;;
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -708,26 +712,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;; 
+		;;
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;; 
+		;;
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;; 
+		;;
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;; 
+		;;
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;; 
+		;;
 esac
     shift
 done
