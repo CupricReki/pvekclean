@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.1.0"
+version="2.2.0"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -135,24 +135,10 @@ get_drive_status() {
 # Show current system information
 kernel_info() {
 	# Lastest kernel installed
-	latest_kernel=$(dpkg --list | awk '/proxmox-kernel-.*-pve/{print $2}' | sed -n 's/proxmox-kernel-//p' | sort -V | tail -n 1 | tr -d '[:space:]')
+	latest_kernel=$(dpkg --list | awk '/(pve|proxmox)-kernel-.*-pve/{print $2}' | sed -n 's/.*-//p' | sort -V | tail -n 1 | tr -d '[:space:]')
 	[ -z "$latest_kernel" ] && latest_kernel="N/A"
 	# Show operating system used
 	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ "]//g' | awk '{print $0}')\n"
-	# Get information about the /boot folder
-    boot_details=($(df -P /boot 2>/dev/null | tail -1))
-    if [ ${#boot_details[@]} -ge 5 ]; then
-        boot_total_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $2}')
-        boot_used_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $3}')
-        boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
-        boot_percent=${boot_details[4]%?}
-        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
-    else
-        boot_info=("" "" "" "" "") # Set empty values if df output is not as expected
-    fi
-
-	# Show information about the /boot
-	printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
 	# Show current kernel in use
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
 	# Check if they are running a PVE kernel
@@ -240,17 +226,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;; 
+			;;
 			2)
 				cron_time="weekly"
-			;; 
+			;;
 			3)
 				cron_time="monthly"
-			;; 
+			;;
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;; 
+			;;
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -345,7 +331,7 @@ uninstall_program() {
 recover_esp_space() {
     printf "\n${bold}${yellow}[!] Attempting to recover space on EFI System Partition...${reset}\n"
     local esp_uuid
-    esp_uuid=$(proxmox-boot-tool status | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}')
+    esp_uuid=$(proxmox-boot-tool status | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
     if [ -z "$esp_uuid" ]; then
         printf "${bold}${red}[!] Could not determine ESP UUID. Aborting recovery.${reset}\n"
         return 1
@@ -402,91 +388,156 @@ recover_esp_space() {
 
 # PVE Kernel Clean main function
 pve_kernel_clean() {
-	# Find all the PVE kernels on the system
-	installed_kernels=$(dpkg --list | grep -E '^(ii|ri|ui|hi).*(pve|proxmox)-kernel-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve' | awk '{print $2}')
-	
-	# Get the latest kernel version
-	latest_kernel_version=$(echo "$installed_kernels" | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
-
-	# List of kernels that will be removed (adds them as the script goes on)
-	kernels_to_remove=()
-	# List of kernel packages to remove
-	kernel_packages_to_remove=()
-
-	# Boot drive status
-	boot_drive_status=$(get_drive_status ${boot_info[4]})
-	# Show space used, status and free space available
-	printf "${bold}[*]${reset} Boot disk space used is ${bold}${boot_drive_status}${reset} at ${boot_info[4]}%% capacity (${boot_info[3]} free)\n"
-	
-    # Check for critically full boot partition
+    local use_pbt=false
+    local boot_info=()
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
-        local esp_details
-        esp_details=($(df -P /var/tmp/espmounts/* 2>/dev/null | tail -1))
-        local esp_percent
-        if [ ${#esp_details[@]} -ge 5 ]; then
-            esp_percent=${esp_details[4]%?}
-            if [ "$esp_percent" -gt "$boot_critical_percent" ]; then
-                recover_esp_space
-            fi
-        fi
-    elif [ -z "${boot_info[4]}" ] || ! [[ ${boot_info[4]} =~ ^[0-9]+$ ]]; then
-        printf "\n${bold}${yellow}[!] WARNING: Could not determine /boot partition size.${reset}\n"
-    elif [ "${boot_info[4]}" -gt "$boot_critical_percent" ]; then
-        printf "\n${bold}${red}[!] FATAL: /boot partition is critically full!${reset}\n"
-        printf "Automated cleanup cannot proceed safely.\n"
-        printf "Please manually remove one old kernel to free up space.\n"
-        printf "For example:\n"
-        printf "  ${cyan}apt-get remove <old-kernel-package-name>${reset}\n"
-        printf "Then run pvekclean again.\n"
-        exit 1
+        use_pbt=true
     fi
 
-	# For each kernel that was found via dpkg
-	for kernel_pkg in $installed_kernels; do
-		kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
+    # --- Determine Boot Partition Info ---
+    if [ "$use_pbt" = true ]; then
+        printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
+        local esp_uuid
+        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        if [ -n "$esp_uuid" ]; then
+            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+            mkdir -p "$mount_point"
+            if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                boot_details=($(df -P "$mount_point" | tail -1))
+                boot_total_h=$(df -h "$mount_point" | tail -1 | awk '{print $2}')
+                boot_used_h=$(df -h "$mount_point" | tail -1 | awk '{print $3}')
+                boot_free_h=$(df -h "$mount_point" | tail -1 | awk '{print $4}')
+                boot_percent=${boot_details[4]%?}
+                boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+                umount "$mount_point"
+                rmdir "$mount_point"
+            fi
+        fi
+    else
+        printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
+        boot_details=($(df -P /boot 2>/dev/null | tail -1))
+        if [ ${#boot_details[@]} -ge 5 ]; then
+            boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
+            boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
+            boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
+            boot_percent=${boot_details[4]%?}
+            boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        fi
+    fi
 
-		# Skip the running kernel
-		if [[ "$current_kernel" == *"$kernel_version"* ]]; then
-			if [ "$remove_newer" == "false" ]; then
-				continue
-			fi
-		fi
-		
-		# Skip the latest kernel
-		if [[ "$kernel_version" == "$latest_kernel_version" ]]; then
-			continue
-		fi
+    if [ -z "${boot_info[4]}" ]; then
+        boot_info=("" "" "" "" "N/A")
+    fi
+    
+	# Display Boot Disk Info
+	local boot_drive_status
+    boot_drive_status=$(get_drive_status "${boot_info[4]}")
+	printf "${bold}[*]${reset} Boot disk space used is ${bold}${boot_drive_status}${reset} at ${boot_info[4]}%% capacity (${boot_info[3]} free)\n"
+	
+    # --- Space Recovery Check ---
+    if [ -n "${boot_info[4]}" ] && [[ "${boot_info[4]}" =~ ^[0-9]+$ ]] && [ "${boot_info[4]}" -gt "$boot_critical_percent" ]; then
+        if [ "$use_pbt" = true ]; then
+            recover_esp_space
+        else
+            printf "\n${bold}${red}[!] FATAL: /boot partition is critically full!${reset}\n"
+            printf "Automated cleanup cannot proceed safely. Run the script again after manually freeing space.\n"
+            exit 1
+        fi
+    fi
 
-		# Add kernel to the list of removal
-	kernels_to_remove+=("$kernel_version")
-		kernel_packages_to_remove+=("$kernel_pkg")
+    # --- Kernel Discovery ---
+    local kernel_packages_to_remove=()
+    local latest_installed_kernel_ver
+    latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
 
-		# Also add headers to the removal list
-		kernel_headers_pkg=$(echo "$kernel_pkg" | sed 's/kernel/headers/')
-		if dpkg --list | grep -q "$kernel_headers_pkg"; then
-			kernel_packages_to_remove+=("$kernel_headers_pkg")
-		fi
-	done
+    local discovery_source
+    if [ "$use_pbt" = true ]; then
+        discovery_source="ESP"
+        local esp_kernels=()
+        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        if [ -n "$esp_uuid" ]; then
+            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+            mkdir -p "$mount_point"
+            if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                # list kernels and strip the vmlinuz- prefix
+                esp_kernels=($(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p'))
+                umount "$mount_point"
+                rmdir "$mount_point"
+            fi
+        fi
+        
+        for k_ver in "${esp_kernels[@]}"; do
+            # Skip running and latest kernel
+            if [[ "$current_kernel" == *"$k_ver"* ]] || [[ "$latest_installed_kernel_ver" == *"$k_ver"* ]]; then
+                continue
+            fi
+            # Construct potential package names and check if they exist
+            for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
+                 pkg_name="${pkg_prefix}${k_ver}"
+                 if dpkg-query -W -f='${Status}' "$pkg_name" 2>/dev/null | grep -q "ok installed"; then
+                     kernel_packages_to_remove+=("$pkg_name")
+                     headers_pkg_name=$(echo "$pkg_name" | sed 's/kernel/headers/')
+                     if dpkg-query -W -f='${Status}' "$headers_pkg_name" 2>/dev/null | grep -q "ok installed"; then
+                         kernel_packages_to_remove+=("$headers_pkg_name")
+                     fi
+                 fi
+            done
+        done
+    else
+        discovery_source="dpkg"
+        local installed_kernel_packages
+        installed_kernel_packages=$(dpkg --list | grep -E '^(ii|ri|ui|hi).*(pve|proxmox)-kernel-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve' | awk '{print $2}')
+        for kernel_pkg in $installed_kernel_packages; do
+            local kernel_version
+            kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
 
+            if [[ "$current_kernel" == *"$kernel_version"* ]] || [[ "$latest_installed_kernel_ver" == *"$kernel_version"* ]]; then
+                continue
+            fi
+            kernel_packages_to_remove+=("$kernel_pkg")
+            local kernel_headers_pkg
+            kernel_headers_pkg=$(echo "$kernel_pkg" | sed 's/kernel/headers/')
+            if dpkg-query -W -f='${Status}' "$kernel_headers_pkg" 2>/dev/null | grep -q "ok installed"; then
+                kernel_packages_to_remove+=("$kernel_headers_pkg")
+            fi
+        done
+    fi
+
+    local kernels_to_keep=()
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
-		if [ $keep_kernels -gt 0 ]; then
+		if [ "$keep_kernels" -gt 0 ]; then
 			printf "${bold}[*]${reset} The last ${bold}$keep_kernels${reset} kernel$([ "$keep_kernels" -eq 1 ] || echo 's') will be held back from being removed.\n"
 			
-			# Number of kernels to remove from the end of the list
-			num_to_keep=$((keep_kernels * 2)) # x2 because of kernel and headers
-
-			if [ "$num_to_keep" -ge "${#kernel_packages_to_remove[@]}" ]; then
-				num_to_keep=${#kernel_packages_to_remove[@]}
+			local unique_kernels=($(printf "%s\n" "${kernel_packages_to_remove[@]}" | grep -v "headers" | sort -V -u))
+			local num_unique_to_keep=$keep_kernels
+			if [ "$num_unique_to_keep" -ge "${#unique_kernels[@]}" ]; then
+				num_unique_to_keep=${#unique_kernels[@]}
 			fi
-			
-			kernels_to_keep=("${kernel_packages_to_remove[@]:${#kernel_packages_to_remove[@]}-$num_to_keep}")
-			kernel_packages_to_remove=("${kernel_packages_to_remove[@]::${#kernel_packages_to_remove[@]}-$num_to_keep}")
+
+            local unique_kernels_to_keep=("${unique_kernels[@]:${#unique_kernels[@]}-$num_unique_to_keep}")
+            local temp_packages_to_remove=()
+
+            for pkg in "${kernel_packages_to_remove[@]}"; do
+                is_kept=false
+                for kept_kernel in "${unique_kernels_to_keep[@]}"; do
+                    if [[ "$pkg" == *"$kept_kernel"* ]]; then
+                        kernels_to_keep+=("$pkg")
+                        is_kept=true
+                        break
+                    fi
+                done
+                if [ "$is_kept" = false ]; then
+                    temp_packages_to_remove+=("$pkg")
+                fi
+            done
+            kernel_packages_to_remove=("${temp_packages_to_remove[@]}")
 		fi
 	fi
 
 	# Show kernels to be removed
-	printf "${bold}[-]${reset} Searching for old PVE kernels on your system...\n"
+	printf "${bold}[-]${reset} Searching for old PVE kernels on your system (Source: $discovery_source)...
+"
 	for kernel_pkg in "${kernel_packages_to_remove[@]}"; do
 		printf "  ${bold}${green}+${reset} \"$kernel_pkg\" added to the kernel remove list\n"
 	done
@@ -527,7 +578,7 @@ pve_kernel_clean() {
 			printf "${bold}[*]${reset} Updating bootloader..."
 			# Update bootloader after kernels are removed
 			if [ "$dry_run" != "true" ]; then
-                if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+                if [ "$use_pbt" = true ]; then
                     /usr/sbin/proxmox-boot-tool refresh
                     if [ $? -ne 0 ]; then
                         printf "${bold}[!]${reset} Error updating bootloader with proxmox-boot-tool.\n"
@@ -551,19 +602,7 @@ pve_kernel_clean() {
 				printf "Dry run: Would have run 'proxmox-boot-tool refresh' or 'update-grub' and optionally 'update-initramfs'\n"
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
-			# Get information about the /boot folder
-            boot_details=($(df -P /boot 2>/dev/null | tail -1))
-            if [ ${#boot_details[@]} -ge 5 ]; then
-                boot_total_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $2}')
-                boot_used_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $3}')
-                boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
-                boot_percent=${boot_details[4]%?}
-                boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
-            else
-                boot_info=("" "" "" "" "") # Set empty values if df output is not as expected
-            fi
-			# Show information about the /boot
-			printf "${bold}[-]${reset} ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+			
 			# Script finished successfully
 			printf "${bold}[-]${reset} Have a nice $(timeGreeting) ⎦˚◡˚⎣\n"
 		# User wishes to not remove the kernels above, exit
@@ -579,7 +618,8 @@ pve_kernel_clean() {
 check_for_update() {
 	if [ "$check_for_updates" == "true" ] && [ "$force_purge" == "false" ]; then
 		# Get latest version number
-		local remote_version=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/version.txt | tr -d '\n' || echo "")
+		local remote_version
+        remote_version=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/version.txt | tr -d '\n' || echo "")
 		# Unable to fetch remote version, so just skip the update check
 		if [ -z "$remote_version" ]; then
 			printf "${bold}[*]${reset} Failed to check for updates. Skipping update check.\n"
@@ -597,7 +637,8 @@ check_for_update() {
 			read -n 1 -r
 			printf "\n"
 			if [[ $REPLY =~ ^[Yy]$ ]]; then
-				local updated_script=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/pvekclean.sh)
+				local updated_script
+                updated_script=$(curl -s -m 10 https://raw.githubusercontent.com/CupricReki/pvekclean/master/pvekclean.sh)
 				# Check if the updated script contains the shebang line
 				if [[ "$updated_script" == "#!/bin/bash"* ]]; then
 					echo "$updated_script" > "$0"  # Overwrite the current script
@@ -613,6 +654,7 @@ check_for_update() {
 }
 
 timeGreeting() {
+    local h
     h=$(date +%k)  # Use %k to get the hour as a decimal number (no leading zero)
     ((h >= 5 && h < 12)) && echo "morning" && return
     ((h >= 12 && h < 17)) && echo "afternoon" && return
@@ -641,22 +683,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;; 
+		;;
 		-r|--remove )
 			main
 			uninstall_program
-		;; 
+		;;
 		-s|--scheduler)
 			main
 			scheduler
-		;; 
+		;;
 		-v|--version)
 			version
-		;; 
+		;;
 		-h|--help)
 			main
 			exit 0
-		;; 
+		;;
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -666,26 +708,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;; 
+		;;
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;; 
+		;;
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;; 
+		;;
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;; 
+		;;
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;; 
+		;;
 esac
     shift
 done
