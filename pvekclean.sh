@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.9"
+version="2.1.0"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -140,11 +140,11 @@ kernel_info() {
 	# Show operating system used
 	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ "]//g' | awk '{print $0}')\n"
 	# Get information about the /boot folder
-    boot_details=($(df -P /boot | tail -1))
+    boot_details=($(df -P /boot 2>/dev/null | tail -1))
     if [ ${#boot_details[@]} -ge 5 ]; then
-        boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
-        boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
-        boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
+        boot_total_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $2}')
+        boot_used_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $3}')
+        boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
         boot_percent=${boot_details[4]%?}
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
     else
@@ -342,6 +342,64 @@ uninstall_program() {
 	fi
 }
 
+recover_esp_space() {
+    printf "\n${bold}${yellow}[!] Attempting to recover space on EFI System Partition...${reset}\n"
+    local esp_uuid
+    esp_uuid=$(proxmox-boot-tool status | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}')
+    if [ -z "$esp_uuid" ]; then
+        printf "${bold}${red}[!] Could not determine ESP UUID. Aborting recovery.${reset}\n"
+        return 1
+    fi
+
+    local mount_point="/mnt/esp_pvekclean"
+    mkdir -p "$mount_point"
+    if ! mount /dev/disk/by-uuid/"$esp_uuid" "$mount_point"; then
+        printf "${bold}${red}[!] Failed to mount ESP at $mount_point. Aborting recovery.${reset}\n"
+        rmdir "$mount_point"
+        return 1
+    fi
+
+    local oldest_kernel_on_esp=""
+    local running_kernel_ver
+    running_kernel_ver=$(uname -r)
+
+    local esp_kernels
+    esp_kernels=$(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p')
+
+    for k in $esp_kernels; do
+        if [[ "$k" == "$running_kernel_ver" ]]; then
+            continue
+        fi
+
+        if [[ -z "$oldest_kernel_on_esp" ]]; then
+            oldest_kernel_on_esp=$k
+        else
+            if dpkg --compare-versions "$k" "lt" "$oldest_kernel_on_esp"; then
+                oldest_kernel_on_esp=$k
+            fi
+        fi
+    done
+
+    if [[ -n "$oldest_kernel_on_esp" ]]; then
+        printf "${bold}[-]${reset} Found oldest unused kernel on ESP: ${cyan}$oldest_kernel_on_esp${reset}\n"
+        if [ "$dry_run" != "true" ]; then
+            printf "${bold}[-]${reset} Removing boot files to make space...\n"
+            rm -f "$mount_point/vmlinuz-$oldest_kernel_on_esp"
+            rm -f "$mount_point/initrd.img-$oldest_kernel_on_esp"
+            printf "${bold}${green}[✔]${reset} Successfully removed old kernel files from ESP.\n"
+        else
+            printf "${bold}[-]${reset} Dry run: Would have removed vmlinuz-$oldest_kernel_on_esp and initrd.img-$oldest_kernel_on_esp from ESP.\n"
+        fi
+    else
+        printf "${bold}${yellow}[!] Could not find an old kernel to remove from ESP.${reset}\n"
+    fi
+
+    umount "$mount_point"
+    rmdir "$mount_point"
+    printf "${bold}[-]${reset} Resuming normal cleanup...\n"
+}
+
+
 # PVE Kernel Clean main function
 pve_kernel_clean() {
 	# Find all the PVE kernels on the system
@@ -361,18 +419,24 @@ pve_kernel_clean() {
 	printf "${bold}[*]${reset} Boot disk space used is ${bold}${boot_drive_status}${reset} at ${boot_info[4]}%% capacity (${boot_info[3]} free)\n"
 	
     # Check for critically full boot partition
-    if [ -z "${boot_info[4]}" ] || ! [[ ${boot_info[4]} =~ ^[0-9]+$ ]]; then
+    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+        local esp_details
+        esp_details=($(df -P /var/tmp/espmounts/* 2>/dev/null | tail -1))
+        local esp_percent
+        if [ ${#esp_details[@]} -ge 5 ]; then
+            esp_percent=${esp_details[4]%?}
+            if [ "$esp_percent" -gt "$boot_critical_percent" ]; then
+                recover_esp_space
+            fi
+        fi
+    elif [ -z "${boot_info[4]}" ] || ! [[ ${boot_info[4]} =~ ^[0-9]+$ ]]; then
         printf "\n${bold}${yellow}[!] WARNING: Could not determine /boot partition size.${reset}\n"
     elif [ "${boot_info[4]}" -gt "$boot_critical_percent" ]; then
         printf "\n${bold}${red}[!] FATAL: /boot partition is critically full!${reset}\n"
         printf "Automated cleanup cannot proceed safely.\n"
         printf "Please manually remove one old kernel to free up space.\n"
         printf "For example:\n"
-        if [ ${#kernel_packages_to_remove[@]} -gt 0 ]; then
-            printf "  ${cyan}apt-get remove ${kernel_packages_to_remove[0]}${reset}\n"
-        else
-            printf "  ${cyan}apt-get remove <old-kernel-package-name>${reset}\n"
-        fi
+        printf "  ${cyan}apt-get remove <old-kernel-package-name>${reset}\n"
         printf "Then run pvekclean again.\n"
         exit 1
     fi
@@ -488,11 +552,11 @@ pve_kernel_clean() {
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
 			# Get information about the /boot folder
-            boot_details=($(df -P /boot | tail -1))
+            boot_details=($(df -P /boot 2>/dev/null | tail -1))
             if [ ${#boot_details[@]} -ge 5 ]; then
-                boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
-                boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
-                boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
+                boot_total_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $2}')
+                boot_used_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $3}')
+                boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
                 boot_percent=${boot_details[4]%?}
                 boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
             else
