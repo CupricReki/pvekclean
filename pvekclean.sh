@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.3.0"
+version="2.3.1"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -689,6 +689,20 @@ pve_kernel_clean() {
         local esp_uuids
         esp_uuids=($(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}'))
         
+        # Capture ESP space BEFORE cleanup for comparison later
+        local -A esp_space_before_kb
+        for esp_uuid in "${esp_uuids[@]}"; do
+            local mount_point="/var/tmp/pvekclean_esp_before_${esp_uuid}_$$"
+            mkdir -p "$mount_point"
+            if mount -t vfat -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                local space_used_kb
+                space_used_kb=$(df -k "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+                esp_space_before_kb[$esp_uuid]=$space_used_kb
+                umount "$mount_point" 2>/dev/null
+            fi
+            rmdir "$mount_point" 2>/dev/null
+        done
+        
         # Collect kernels from ALL ESPs and track locations
         for esp_uuid in "${esp_uuids[@]}"; do
             local mount_point="/var/tmp/pvekclean_esp_mount_${esp_uuid}_$$"
@@ -994,6 +1008,55 @@ pve_kernel_clean() {
 				fi
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
+			
+			# Show ESP space comparison (if using proxmox-boot-tool and not dry-run)
+			if [ "$use_pbt" = true ] && [ "$dry_run" != "true" ] && [ ${#esp_uuids[@]} -gt 0 ]; then
+				printf "\n${bold}[*]${reset} ESP Space Summary:\n"
+				local esp_num=1
+				for esp_uuid in "${esp_uuids[@]}"; do
+					local mount_point="/var/tmp/pvekclean_esp_after_${esp_uuid}_$$"
+					mkdir -p "$mount_point"
+					
+					if mount -t vfat -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+						local space_used_kb_after
+						space_used_kb_after=$(df -k "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+						local space_total_kb
+						space_total_kb=$(df -k "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+						local space_used_after
+						space_used_after=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+						local space_total
+						space_total=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+						local space_free
+						space_free=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
+						local space_percent
+						space_percent=$(df -k "$mount_point" 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%')
+						
+						# Calculate space freed
+						local space_before_kb=${esp_space_before_kb[$esp_uuid]:-0}
+						local space_freed_kb=$((space_before_kb - space_used_kb_after))
+						local space_freed_mb=$((space_freed_kb / 1024))
+						
+						# Determine status
+						local status_icon=""
+						if [ $space_freed_kb -gt 0 ]; then
+							status_icon="${bold}${green}✓${reset}"
+						else
+							status_icon="${bold}${yellow}○${reset}"
+						fi
+						
+						printf "  $status_icon ${bold}ESP $esp_num${reset} [$esp_uuid]: ${space_percent}%% full [${space_used_after}/${space_total} used, ${space_free} free]"
+						
+						if [ $space_freed_kb -gt 0 ]; then
+							printf " ${bold}${green}(freed ${space_freed_mb}M)${reset}"
+						fi
+						printf "\n"
+						
+						umount "$mount_point" 2>/dev/null
+						esp_num=$((esp_num + 1))
+					fi
+					rmdir "$mount_point" 2>/dev/null
+				done
+			fi
 			
 			# Suggest running apt autoremove to clean up orphaned dependencies (not in dry-run)
 			if [ "$dry_run" != "true" ]; then
