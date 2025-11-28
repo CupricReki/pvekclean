@@ -333,98 +333,115 @@ uninstall_program() {
 # PVE Kernel Clean main function
 pve_kernel_clean() {
 	# Find all the PVE kernels on the system
-	kernels=$(dpkg --list | grep -E "(pve-kernel|proxmox-kernel)-[0-9].*" | grep -E "Kernel Image" | grep -vE "${latest_kernel%-pve}|series|transitional" | awk '{print $2}' | sed -n 's/\(pve\|proxmox\)-kernel-\(.*\)/\2/p' | sort -V)
+	installed_kernels=$(dpkg --list | grep -E "(pve-kernel|proxmox-kernel)-[0-9].*" | grep -E "Kernel Image" | awk '{print $2}')
+	
+	# Get the latest kernel version
+	latest_kernel_version=$(echo "$installed_kernels" | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
+
 	# List of kernels that will be removed (adds them as the script goes on)
 	kernels_to_remove=()
+	# List of kernel packages to remove
+	kernel_packages_to_remove=()
+
 	# Boot drive status
 	boot_drive_status=$(get_drive_status ${boot_info[4]})
 	# Show space used, status and free space available
 	printf "${bold}[*]${reset} Boot disk space used is ${bold}${boot_drive_status}${reset} at ${boot_info[4]}%% capacity (${boot_info[3]} free)\n"
+	
 	# For each kernel that was found via dpkg
-	current_kernel_passed=false
-	for kernel in $kernels
-	do
-		# Check if the kernel is already in the array
-		if [[ " ${kernels_to_remove[@]} " =~ " $kernel " ]]; then
-			continue  # Skip adding it again
-		fi
-		# Only if not removing newer kernels and kernel matches the current kernel
-		if [ "$(echo $kernel | grep "$current_kernel")" ]; then
+	for kernel_pkg in $installed_kernels; do
+		kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
+
+		# Skip the running kernel
+		if [[ "$current_kernel" == *"$kernel_version"* ]]; then
 			if [ "$remove_newer" == "false" ]; then
-				break
-			else
-				current_kernel_passed=true
 				continue
 			fi
-		# Add kernel to the list of removal since it is old
-		else
-			kernels_to_remove+=("$kernel")  # Add the kernel to the array
+		fi
+		
+		# Skip the latest kernel
+		if [[ "$kernel_version" == "$latest_kernel_version" ]]; then
+			continue
+		fi
+
+		# Add kernel to the list of removal
+		kernels_to_remove+=("$kernel_version")
+		kernel_packages_to_remove+=("$kernel_pkg")
+
+		# Also add headers to the removal list
+		kernel_headers_pkg=$(echo "$kernel_pkg" | sed 's/kernel/headers/')
+		if dpkg --list | grep -q "$kernel_headers_pkg"; then
+			kernel_packages_to_remove+=("$kernel_headers_pkg")
 		fi
 	done
-	# If remove_newer is set keep the last kernel installed as its newest
-	# if [ "$remove_newer" == "true" ] && [ "$current_kernel_passed" == "true" ] && [ ${#kernels_to_remove[@]} -gt 0 ]; then
-	# 	unset kernels_to_remove[-1]
-	# fi
+
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
 		if [ $keep_kernels -gt 0 ]; then
 			printf "${bold}[*]${reset} The last ${bold}$keep_kernels${reset} kernel$([ "$keep_kernels" -eq 1 ] || echo 's') will be held back from being removed.\n"
-			# Check if the number of kernels to keep is greater than or equal to the number of kernels in the array
-			if [ "$keep_kernels" -ge "${#kernels_to_remove[@]}" ]; then
-				# Set keep_kernels to the number of kernels in the array
-				keep_kernels="${#kernels_to_remove[@]}"
-			fi			
-			kernels_to_keep=("${kernels_to_remove[@]:${#kernels_to_remove[@]}-$keep_kernels:$keep_kernels}")
-			kernels_to_remove=("${kernels_to_remove[@]::${#kernels_to_remove[@]}-$keep_kernels}")
+			
+			# Number of kernels to remove from the end of the list
+			num_to_keep=$((keep_kernels * 2)) # x2 because of kernel and headers
+
+			if [ "$num_to_keep" -ge "${#kernel_packages_to_remove[@]}" ]; num_to_keep=${#kernel_packages_to_remove[@]}; fi
+			
+			kernels_to_keep=("${kernel_packages_to_remove[@]:${#kernel_packages_to_remove[@]}-$num_to_keep}")
+			kernel_packages_to_remove=("${kernel_packages_to_remove[@]::${#kernel_packages_to_remove[@]}-$num_to_keep}")
 		fi
 	fi
+
 	# Show kernels to be removed
 	printf "${bold}[-]${reset} Searching for old PVE kernels on your system...\n"
-	for kernel in "${kernels_to_remove[@]}"
-	do
-		printf "  ${bold}${green}+${reset} \"$kernel\" added to the kernel remove list\n"
+	for kernel_pkg in "${kernel_packages_to_remove[@]}"; do
+		printf "  ${bold}${green}+${reset} \"$kernel_pkg\" added to the kernel remove list\n"
 	done
-	for kernel in "${kernels_to_keep[@]}"
-	do
-		printf "  ${bold}${red}-${reset} \"$kernel\" is being held back from removal\n"
+	for kernel_pkg in "${kernels_to_keep[@]}"; do
+		printf "  ${bold}${red}-${reset} \"$kernel_pkg\" is being held back from removal\n"
 	done
 	printf "${bold}[-]${reset} PVE kernel search complete!\n"
+
 	# If there are no kernels to be removed then exit
-	if [ ${#kernels_to_remove[@]} -eq 0 ]; then
+	if [ ${#kernel_packages_to_remove[@]} -eq 0 ]; then
 		printf "${bold}[!]${reset} It appears there are no old PVE kernels on your system ⎦˚◡˚⎣\n"
 		printf "${bold}[-]${reset} Good bye!\n"
 	# Kernels found in removal list
 	else
-		num_to_remove=${#kernels_to_remove[@]}
+		num_to_remove=${#kernel_packages_to_remove[@]}
 		# Check if force removal was passed
 		if [ $force_purge == true ]; then
 			REPLY="y"
 		# Ask the user if they want to remove the selected kernels found
 		else
-			printf "${bold}[!]${reset} Would you like to remove the ${bold}$num_to_remove${reset} selected PVE kernel$([ "$num_to_remove" -eq 1 ] || echo 's') listed above? [y/N]: " 
+			printf "${bold}[!]${reset} Would you like to remove the ${bold}$num_to_remove${reset} selected PVE kernel package$([ "$num_to_remove" -eq 1 ] || echo 's') listed above? [y/N]: "
 			read -n 1 -r
 			printf "\n"
 		fi
 		# User wishes to remove the kernels
 		if [[ $REPLY =~ ^[Yy]$ ]]; then
-			printf "${bold}[*]${reset} Removing $num_to_remove old PVE kernel$([ "$num_to_remove" -eq 1 ] || echo 's')...\n"
-			for kernel in "${kernels_to_remove[@]}"
-			do
-				printf "${bold}[-]${reset} Removing kernel: $kernel..."
-				# Purge the old kernels via apt and suppress output
-				if [ "$dry_run" != "true" ]; then
-					DEBIAN_FRONTEND=noninteractive /usr/bin/apt purge -y pve-kernel-$kernel proxmox-kernel-$kernel pve-kernel-${kernel%-pve} proxmox-kernel-${kernel%-pve} pve-headers-${kernel%-pve} proxmox-headers-${kernel%-pve}
-				fi
-				printf "${bold}${green}DONE!${reset}\n"
-			done
-			printf "${bold}[*]${reset} Updating GRUB..."
-			# Update grub after kernels are removed, suppress output
+			printf "${bold}[*]${reset} Removing $num_to_remove old PVE kernel package$([ "$num_to_remove" -eq 1 ] || echo 's')...\n"
+			
 			if [ "$dry_run" != "true" ]; then
-				/usr/sbin/update-grub > /dev/null 2>&1
+				DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get purge -y "${kernel_packages_to_remove[@]}"
+				if [ $? -ne 0 ]; then
+					printf "${bold}[!]${reset} Error removing kernel packages.\n"
+				fi
+			else
+				printf "Dry run: Would have run 'apt-get purge -y ${kernel_packages_to_remove[*]}'\n"
+			fi
+
+			printf "${bold}[*]${reset} Updating GRUB..."
+			# Update grub after kernels are removed
+			if [ "$dry_run" != "true" ]; then
+				/usr/sbin/update-grub
+				if [ $? -ne 0 ]; then
+					printf "${bold}[!]${reset} Error updating GRUB.\n"
+				fi
+			else
+				printf "Dry run: Would have run 'update-grub'\n"
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
 			# Get information about the /boot folder
-			boot_info=($(echo $(df -Ph | grep /boot | tail -1) | sed 's/%//g'))
+			boot_info=($(df -Ph | grep /boot | tail -1 | sed 's/%//g'))
 			# Show information about the /boot
 			printf "${bold}[-]${reset} ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
 			# Script finished successfully
