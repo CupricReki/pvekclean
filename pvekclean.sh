@@ -296,7 +296,7 @@ kernel_info() {
     fi
 
     if [[ "$current_kernel" != *"pve"* ]]; then
-        printf "${bold}${yellow}[!] WARNING:${reset} You're not running a PVE kernel\n"
+        printf "\n${bold}${yellow}[!] WARNING:${reset} You're not running a PVE kernel\n"
         printf "${bold}[*]${reset} Would you like to continue [y/N] "
         read -n 1 -r
         printf "\n"
@@ -307,8 +307,6 @@ kernel_info() {
             exit 0
         fi
     fi
-	printf "___________________________________________
-"
 }
 
 # Usage information on how to use PVE Kernel Clean
@@ -327,8 +325,6 @@ show_usage() {
 		printf "  -r, --remove          Uninstall $program_name from the system\n"
 		printf "  -i, --install         Install $program_name to the system\n"
 		printf "  -d, --dry-run         Run the program in dry run mode for testing without making system changes\n"
-		printf "___________________________________________
-"
 	fi
 }
 
@@ -410,8 +406,7 @@ install_program() {
 		pvekclean_installed_version=$(/usr/local/sbin/$program_name -v | awk '{printf $0}')
 		# If the version differs, update it to the latest from the script
 		if [ $version != $pvekclean_installed_version ] && [ $force_purge == false ]; then
-			printf "${bold}[!]${reset} A new version of PVE Kernel Cleaner has been detected (Installed: $pvekclean_installed_version | New: $version).\n"
-			printf "${bold}[*]${reset} Installing update...\n"
+			printf "\n${bold}${yellow}[!] UPDATE AVAILABLE:${reset} New version detected (Installed: $pvekclean_installed_version → New: $version)\n"
 			force_pvekclean_update=true
 		fi
 	fi
@@ -425,21 +420,32 @@ install_program() {
 			else
 				# Update the timestamp in the file to record the time of the last ask
 				echo $(date +%s) > "$tmp_file"
-				# Ask if we can install it
-				printf "${bold}[-]${reset} Can we install PVE Kernel Cleaner to your /usr/local/sbin for easier access [y/N] " 
+				# Ask if we can install/update it
+				if [ $force_pvekclean_update == true ]; then
+					printf "${bold}[-]${reset} Update PVE Kernel Cleaner to the latest version? [y/N] "
+				else
+					printf "${bold}[-]${reset} Install PVE Kernel Cleaner to /usr/local/sbin for easier access? [y/N] "
+				fi
 				read -n 1 -r
 				printf "\n"
 			fi
 			# User agrees to have it installed
 			if [[ $REPLY =~ ^[Yy]$ ]]; then
 				# Copy the script to /usr/local/sbin and set execution permissions
+				if [ $force_pvekclean_update == true ]; then
+					printf "${bold}[*]${reset} Updating PVE Kernel Cleaner...\n"
+				fi
 				cp $0 /usr/local/sbin/$program_name
 				chmod +x /usr/local/sbin/$program_name
 				# Tell user how to use it
-				printf "${bold}[*]${reset} Installed PVE Kernel Cleaner to /usr/local/sbin/$program_name\n"
-				printf "${bold}[*]${reset} Run the command \"$program_name\" to begin using this program.\n"
-				printf "${bold}[-]${reset} Run the command \"$program_name -r\" to remove this program at any time.\n"
-				exit 0
+				if [ $force_pvekclean_update == true ]; then
+					printf "${bold}${green}[✓]${reset} Successfully updated to version $version\n"
+				else
+					printf "${bold}${green}[✓]${reset} Installed PVE Kernel Cleaner to /usr/local/sbin/$program_name\n"
+					printf "${bold}[*]${reset} You can now use the command \"$program_name\" to run this program.\n"
+				fi
+				printf "${bold}[-]${reset} Continuing with kernel cleanup...\n\n"
+				# Don't exit - continue with the script execution
 			fi
 			# if [ -n "$force_pvekclean_install" ]; then
 			# 	exit 0
