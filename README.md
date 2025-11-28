@@ -2,11 +2,12 @@
 
 Easily remove old/unused PVE kernels on your Proxmox VE system
 
-[![Version](https://img.shields.io/badge/Version-v2.0.6-brightgreen)](https://github.com/CupricReki/pvekclean)
+[![Version](https://img.shields.io/badge/Version-v2.2.1-brightgreen)](https://github.com/CupricReki/pvekclean)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
 ![Updated](https://img.shields.io/github/last-commit/CupricReki/pvekclean)
 ![Proxmox](https://img.shields.io/badge/-Proxmox-orange)
 ![Debian](https://img.shields.io/badge/-Debian-red)
+[![Security](https://img.shields.io/badge/Security-Audited-blue)](SECURITY_AUDIT.md)
 
 ### What is PVE Kernel Cleaner?
 
@@ -18,18 +19,24 @@ PVE Kernel Cleaner is a program to compliment Proxmox Virtual Environment which 
 
 ## Features
 
-* Removes old PVE kernels from your system
+* Removes old PVE kernels from your system safely with multiple protection layers
+* **NEW:** Default retention of 1 old kernel as fallback (configurable with `--keep`)
+* **NEW:** Exact version matching prevents accidental removal of critical kernels
+* **NEW:** Enhanced bootloader detection (proxmox-boot-tool and GRUB) with safety checks
+* **NEW:** Fatal error exits prevent system damage from failed bootloader updates
 * Ability to schedule PVE kernels to automatically be removed on a daily/weekly/monthly basis
 * Run a simple pvekclean command for ease of access
 * Checks health of boot disk based on space available
-* Debug mode for non-destructive testing
+* Detects and removes orphaned kernel files from EFI System Partition (ESP)
+* True dry-run mode for testing (guaranteed zero system modifications)
 * Update function to easily update the program to the latest version
 * Allows you to specify the minimum number of most recent PVE kernels to retain
 * Support for the latest Proxmox versions and PVE kernels
+* Comprehensive error handling with recovery instructions
 
 ## Latest Version
 
-* v2.0.2
+* **v2.2.1** - Major security and safety improvements ([see audit](SECURITY_AUDIT.md))
 
 ## Prerequisites
 
@@ -83,14 +90,19 @@ Example of usage:
  pvekclean [OPTION1] [OPTION2]...
 
 -k, --keep [number]   Keep the specified number of most recent PVE kernels on the system
+                      Default: 1 (keeps one old kernel as fallback for safety)
+                      Set to 0 to remove all old kernels (not recommended)
                       Can be used with -f or --force for non-interactive removal
 -f, --force           Force the removal of old PVE kernels without confirm prompts
+                      WARNING: Bypasses safety checks including kernel version verification
 -rn, --remove-newer   Remove kernels that are newer than the currently running kernel
+                      WARNING: Dangerous operation, use with caution
 -s, --scheduler       Have old PVE kernels removed on a scheduled basis
 -v, --version         Shows current version of pvekclean
 -r, --remove          Uninstall pvekclean from the system
 -i, --install         Install pvekclean to the system
 -d, --dry-run         Run the program in dry run mode for testing without making system changes
+                      Guarantees zero modifications (no installs, updates, or kernel removals)
 
 ```
 
@@ -132,6 +144,37 @@ pvekclean -s
 pvekclean -d
 ```
 <sub>This command runs PVE Kernel Cleaner in dry run mode, simulating actions without actually removing any kernels or making changes to your system. It's useful for testing and understanding what the script would do.</sub>
+
+## Security & Safety
+
+This script has undergone comprehensive security auditing to ensure safe operation on production Proxmox systems. Key safety features include:
+
+* **Current kernel always protected** - Never removes the running kernel
+* **Latest kernel always protected** - Preserves newest installed kernel (unless `--remove-newer` explicitly used)
+* **Default fallback retention** - Keeps at least 1 old kernel for recovery
+* **Bootloader verification** - Confirms bootloader configuration before making changes
+* **Fatal error handling** - Exits immediately if critical operations fail
+* **True dry-run mode** - Test safely without any system modifications
+* **Package verification** - Validates all packages exist before attempting removal
+
+For detailed security information, see [SECURITY_AUDIT.md](SECURITY_AUDIT.md).
+
+### Recommended Usage Pattern
+
+```bash
+# 1. Always test with dry-run first
+sudo ./pvekclean.sh --dry-run
+
+# 2. Review the proposed changes carefully
+
+# 3. Run with default safety settings
+sudo ./pvekclean.sh
+
+# 4. For extra safety, keep 2 old kernels
+sudo ./pvekclean.sh --keep 2
+```
+
+**⚠️ Not Recommended:** Using `--keep 0` or `--force` without understanding the risks.
 
 ## Developers
 

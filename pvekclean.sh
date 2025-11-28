@@ -33,6 +33,10 @@ ______________________________________________
 # Percentage of used space in the /boot which would consider it critically full
 boot_critical_percent="95"
 
+# Default minimum number of old kernels to keep as fallback (besides current and latest)
+# Set to 0 to disable, or override with --keep flag
+default_keep_kernels="1"
+
 # To check for updates or not
 check_for_updates=true
 
@@ -134,9 +138,26 @@ get_drive_status() {
 
 # Show current system information
 kernel_info() {
+    # Determine boot method - check what bootloader is actually being used
     local use_pbt=false
+    local use_grub=false
+    
+    # Check for proxmox-boot-tool (EFI System Partition method)
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
-        use_pbt=true
+        if [ -d "/sys/firmware/efi" ]; then
+            if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
+                if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -qi "ESP"; then
+                    use_pbt=true
+                fi
+            fi
+        fi
+    fi
+    
+    # Check for GRUB (if proxmox-boot-tool not detected)
+    if [ "$use_pbt" = false ]; then
+        if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
+            use_grub=true
+        fi
     fi
 
 	# Lastest kernel installed
@@ -145,6 +166,8 @@ kernel_info() {
 	[ -z "$latest_installed_kernel_ver" ] && latest_installed_kernel_ver="N/A"
 
     printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ \\"]//g' | awk '{print $0}')\n"
+    
+    # Display detected bootloader
     if [ "$use_pbt" = true ]; then
         printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
         local esp_uuid
@@ -171,7 +194,7 @@ kernel_info() {
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
-    else
+    elif [ "$use_grub" = true ]; then
         printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
         local boot_details=($(df -P /boot 2>/dev/null | tail -1))
         local boot_total_h=""
@@ -187,13 +210,36 @@ kernel_info() {
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+    else
+        # No supported bootloader detected
+        printf " ${bold}Boot Method:${reset} ${red}UNKNOWN/UNSUPPORTED${reset}\n"
+        printf "${bold}${red}[!] WARNING:${reset} Could not detect a supported bootloader!\n"
+        printf "${bold}[!]${reset} This script may not be safe to use on this system.\n"
     fi
 
 
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
     # Check if we are running the latest kernel, if not warn
-    if [[ "$latest_installed_kernel_ver" != *"$current_kernel"* ]]; then
+    if [[ "$latest_installed_kernel_ver" != "$current_kernel" ]]; then
         printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
+        printf "\n${bold}${yellow}[!] WARNING:${reset} You are NOT booted into the latest kernel!\n"
+        printf "${bold}[!]${reset} Current: $current_kernel\n"
+        printf "${bold}[!]${reset} Latest:  ${latest_installed_kernel_ver}\n"
+        printf "${bold}[!]${reset} It is recommended to:\n"
+        printf "    1. Reboot into the latest kernel (${latest_installed_kernel_ver})\n"
+        printf "    2. Verify the system boots successfully\n"
+        printf "    3. Re-run this script after confirming the new kernel works\n"
+        printf "${bold}[!]${reset} This ensures you can fall back to the current kernel if needed.\n\n"
+        if [ "$force_purge" = false ]; then
+            printf "${bold}[*]${reset} Do you want to continue anyway? [y/N]: "
+            read -n 1 -r
+            printf "\n"
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                printf "\nExiting. Please reboot to the latest kernel first.\n"
+                printf "${bold}[-]${reset} Good bye!\n"
+                exit 0
+            fi
+        fi
     fi
 
     if [[ "$current_kernel" != *"pve"* ]]; then
@@ -220,9 +266,13 @@ show_usage() {
 	if [ $force_purge == false ]; then
 		printf "${bold}Usage:${reset} $(basename $0) [OPTION1] [OPTION2]...\n\n"
 		printf "  -k, --keep [number]   Keep the specified number of most recent PVE kernels on the system\n"
+		printf "                        ${bold}Default: $default_keep_kernels${reset} (keeps fallback kernel for safety)\n"
+		printf "                        Set to 0 to remove all old kernels (not recommended)\n"
 		printf "                        Can be used with -f or --force for non-interactive removal\n"
 		printf "  -f, --force           Force the removal of old PVE kernels without confirm prompts\n"
+		printf "                        ${bold}WARNING:${reset} Bypasses safety checks including kernel version verification\n"
 		printf "  -rn, --remove-newer   Remove kernels that are newer than the currently running kernel\n"
+		printf "                        ${bold}WARNING:${reset} Dangerous operation, use with caution\n"
 		printf "  -s, --scheduler       Have old PVE kernels removed on a scheduled basis\n"
 		printf "  -v, --version         Shows current version of $program_name\n"
 		printf "  -r, --remove          Uninstall $program_name from the system\n"
@@ -301,6 +351,11 @@ scheduler() {
 
 # Installs PVE Kernel Cleaner for easier access
 install_program() {
+	# Skip installation prompts in dry-run mode (no system modifications allowed)
+	if [ "$dry_run" = "true" ]; then
+		return 0
+	fi
+	
 	force_pvekclean_update=false
     local tmp_file="/tmp/.pvekclean_install_lock"
     local install=false
@@ -435,8 +490,64 @@ recover_esp_space() {
 }
 
 
+# Cleanup function for trap
+cleanup_on_exit() {
+    # Unmount any mounted ESPs
+    local mount_patterns=("/var/tmp/pvekclean_esp_mount_*" "/mnt/esp_pvekclean")
+    for pattern in "${mount_patterns[@]}"; do
+        for mount_point in $pattern; do
+            if [ -d "$mount_point" ] && mountpoint -q "$mount_point" 2>/dev/null; then
+                umount "$mount_point" 2>/dev/null
+                rmdir "$mount_point" 2>/dev/null
+            fi
+        done
+    done
+}
+
+# Set trap to cleanup on exit, interrupt, or termination
+trap cleanup_on_exit EXIT INT TERM
+
 # PVE Kernel Clean main function
 pve_kernel_clean() {
+
+    # Determine boot method early - check what bootloader is actually being used
+    local use_pbt=false
+    local use_grub=false
+    local bootloader_detected=false
+    
+    # Check for proxmox-boot-tool (EFI System Partition method)
+    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+        # Check if system has EFI firmware
+        if [ -d "/sys/firmware/efi" ]; then
+            # Check if proxmox-boot-tool is actually configured with ESPs
+            if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
+                # Verify at least one ESP is configured
+                if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -qi "ESP"; then
+                    use_pbt=true
+                    bootloader_detected=true
+                fi
+            fi
+        fi
+    fi
+    
+    # Check for GRUB (if proxmox-boot-tool not detected)
+    if [ "$bootloader_detected" = false ]; then
+        if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
+            use_grub=true
+            bootloader_detected=true
+        fi
+    fi
+    
+    # Fail if we can't detect any supported bootloader
+    if [ "$bootloader_detected" = false ]; then
+        printf "${bold}${red}[!] CRITICAL ERROR:${reset} Cannot detect bootloader!\n"
+        printf "${bold}[!]${reset} Neither proxmox-boot-tool nor GRUB could be detected.\n"
+        printf "${bold}[!]${reset} This script requires one of:\n"
+        printf "    - proxmox-boot-tool (EFI) with configured ESPs\n"
+        printf "    - GRUB with /boot/grub/grub.cfg\n"
+        printf "${bold}[!]${reset} Aborting to prevent system damage.\n"
+        exit 1
+    fi
 
     # --- Kernel Discovery ---
     local kernel_packages_to_remove=()
@@ -444,7 +555,7 @@ pve_kernel_clean() {
     latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
 
     local discovery_source
-    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+    if [ "$use_pbt" = true ]; then
         discovery_source="ESP"
         local esp_kernels=()
         esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
@@ -460,9 +571,19 @@ pve_kernel_clean() {
         fi
         
         for k_ver in "${esp_kernels[@]}"; do
-            # Skip running and latest kernel
-            if [[ "$current_kernel" == *"$k_ver"* ]] || [[ "$latest_installed_kernel_ver" == *"$k_ver"* ]]; then
+            # Always skip running kernel
+            if [[ "$k_ver" == "$current_kernel" ]]; then
                 continue
+            fi
+            # Skip latest kernel unless --remove-newer is set
+            if [[ "$k_ver" == "$latest_installed_kernel_ver" ]]; then
+                continue
+            fi
+            # Skip kernels newer than current unless --remove-newer is set
+            if [ "$remove_newer" = false ]; then
+                if dpkg --compare-versions "$k_ver" "gt" "$current_kernel"; then
+                    continue
+                fi
             fi
             # Construct potential package names and check if they exist
             for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
@@ -484,8 +605,19 @@ pve_kernel_clean() {
             local kernel_version
             kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
 
-            if [[ "$current_kernel" == *"$kernel_version"* ]] || [[ "$latest_installed_kernel_ver" == *"$kernel_version"* ]]; then
+            # Always skip running kernel
+            if [[ "$kernel_version" == "$current_kernel" ]]; then
                 continue
+            fi
+            # Skip latest kernel unless --remove-newer is set
+            if [[ "$kernel_version" == "$latest_installed_kernel_ver" ]]; then
+                continue
+            fi
+            # Skip kernels newer than current unless --remove-newer is set
+            if [ "$remove_newer" = false ]; then
+                if dpkg --compare-versions "$kernel_version" "gt" "$current_kernel"; then
+                    continue
+                fi
             fi
             kernel_packages_to_remove+=("$kernel_pkg")
             local kernel_headers_pkg
@@ -496,7 +628,66 @@ pve_kernel_clean() {
         done
     fi
 
+    # --- Remove Duplicates from Package List ---
+    # Using associative array to deduplicate (bash 4+)
+    local -A seen_packages
+    local unique_packages=()
+    for pkg in "${kernel_packages_to_remove[@]}"; do
+        if [[ -z "${seen_packages[$pkg]}" ]]; then
+            seen_packages[$pkg]=1
+            unique_packages+=("$pkg")
+        fi
+    done
+    kernel_packages_to_remove=("${unique_packages[@]}")
+
+    # --- Early Package Verification ---
+    # Verify all packages in removal list actually exist and are removable
+    local missing_packages=()
+    local verification_failed=false
+    for kernel_pkg in "${kernel_packages_to_remove[@]}"; do
+        if ! dpkg-query -W -f='${Status}' "$kernel_pkg" 2>/dev/null | grep -q "ok installed"; then
+            missing_packages+=("$kernel_pkg")
+            verification_failed=true
+        fi
+    done
+
+    if [ "$verification_failed" = true ]; then
+        printf "${bold}${red}[!] CRITICAL ERROR:${reset} Package verification failed!\n"
+        printf "${bold}[!]${reset} The following packages were identified for removal but are not properly installed:\n"
+        for pkg in "${missing_packages[@]}"; do
+            printf "  ${red}✗${reset} $pkg\n"
+        done
+        printf "\n${bold}[!]${reset} This indicates a mismatch between boot partition and dpkg database.\n"
+        printf "${bold}[!]${reset} Aborting to prevent system damage. Please investigate manually.\n"
+        exit 1
+    fi
+    
+    # --- Warn if --remove-newer is being used ---
+    if [ "$remove_newer" = true ]; then
+        printf "${bold}${yellow}[!] WARNING:${reset} --remove-newer flag is active!\n"
+        printf "${bold}[!]${reset} This will allow removal of kernels NEWER than the running kernel.\n"
+        printf "${bold}[!]${reset} This is potentially dangerous if newer kernels are needed for hardware support.\n"
+        if [ "$force_purge" = false ]; then
+            printf "${bold}[*]${reset} Are you sure you want to continue? [y/N]: "
+            read -n 1 -r
+            printf "\n"
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                printf "\nExiting for safety.\n"
+                printf "${bold}[-]${reset} Good bye!\n"
+                exit 0
+            fi
+        fi
+    fi
+
     local kernels_to_keep=()
+	
+	# Apply default kernel retention if user didn't specify --keep
+	if [[ -z "$keep_kernels" ]] && [[ "$default_keep_kernels" =~ ^[0-9]+$ ]] && [ "$default_keep_kernels" -gt 0 ]; then
+		keep_kernels="$default_keep_kernels"
+		printf "${bold}[*]${reset} Applying default policy: keeping at least ${bold}$keep_kernels${reset} old kernel$([ "$keep_kernels" -eq 1 ] || echo 's') as fallback.\n"
+		printf "${bold}[*]${reset} (You can override this with --keep <number> or set default_keep_kernels=0 in the script)\n"
+	fi
+	
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
 		if [ "$keep_kernels" -gt 0 ]; then
@@ -512,9 +703,11 @@ pve_kernel_clean() {
             local temp_packages_to_remove=()
 
             for pkg in "${kernel_packages_to_remove[@]}"; do
-                is_kept=false
+                local is_kept=false
                 for kept_kernel in "${unique_kernels_to_keep[@]}"; do
-                    if [[ "$pkg" == *"$kept_kernel"* ]]; then
+                    # Check if pkg is exactly the kept kernel OR its corresponding headers package
+                    local kept_headers=$(echo "$kept_kernel" | sed 's/kernel/headers/')
+                    if [[ "$pkg" == "$kept_kernel" ]] || [[ "$pkg" == "$kept_headers" ]]; then
                         kernels_to_keep+=("$pkg")
                         is_kept=true
                         break
@@ -531,6 +724,7 @@ pve_kernel_clean() {
 	# Show kernels to be removed
 	printf "${bold}[-]${reset} Searching for old PVE kernels on your system (Source: $discovery_source)...
 "
+	printf "${bold}${green}[✓]${reset} Current kernel ($current_kernel) is ALWAYS protected from removal\n"
 	for kernel_pkg in "${kernel_packages_to_remove[@]}"; do
 		printf "  ${bold}${green}+${reset} \"$kernel_pkg\" added to the kernel remove list\n"
 	done
@@ -562,37 +756,58 @@ pve_kernel_clean() {
 			if [ "$dry_run" != "true" ]; then
 				DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get purge -y "${kernel_packages_to_remove[@]}"
 				if [ $? -ne 0 ]; then
-					printf "${bold}[!]${reset} Error removing kernel packages.\n"
+					printf "${bold}${red}[!] CRITICAL ERROR:${reset} Failed to remove kernel packages.\n"
+					printf "${bold}[!]${reset} apt-get purge exited with an error.\n"
+					printf "${bold}[!]${reset} System state may be inconsistent. Check 'dpkg -l | grep kernel' before proceeding.\n"
+					printf "${bold}[!]${reset} Not attempting bootloader update to prevent further damage.\n"
+					exit 1
 				fi
 			else
 				printf "Dry run: Would have run 'apt-get purge -y ${kernel_packages_to_remove[*]}'\n"
 			fi
 
-			printf "${bold}[*]${reset} Updating bootloader..."
+			printf "${bold}[*]${reset} Updating bootloader...\n"
 			# Update bootloader after kernels are removed
 			if [ "$dry_run" != "true" ]; then
                 if [ "$use_pbt" = true ]; then
+                    # For proxmox-boot-tool (EFI), run update-initramfs first, then refresh
+                    printf "${bold}[-]${reset} Running update-initramfs...\n"
+                    /usr/sbin/update-initramfs -u
+                    if [ $? -ne 0 ]; then
+                        printf "${bold}${red}[!] CRITICAL ERROR:${reset} Failed to update initramfs.\n"
+                        printf "${bold}[!]${reset} System may be unbootable. Manual intervention required.\n"
+                        printf "${bold}[!]${reset} Try running: update-initramfs -u\n"
+                        exit 1
+                    fi
+                    printf "${bold}[-]${reset} Running proxmox-boot-tool refresh...\n"
                     /usr/sbin/proxmox-boot-tool refresh
                     if [ $? -ne 0 ]; then
-                        printf "${bold}[!]${reset} Error updating bootloader with proxmox-boot-tool.\n"
+                        printf "${bold}${red}[!] CRITICAL ERROR:${reset} Failed to update bootloader with proxmox-boot-tool.\n"
+                        printf "${bold}[!]${reset} System may be unbootable. Manual intervention required.\n"
+                        printf "${bold}[!]${reset} Try running: proxmox-boot-tool refresh\n"
+                        exit 1
                     fi
-                else
-                    printf "${bold}[*]${reset} Would you like to run update-initramfs? [y/N]: "
-                    read -n 1 -r
-                    printf "\n"
-                    if [[ $REPLY =~ ^[Yy]$ ]]; then
-                        /usr/sbin/update-initramfs -u
-                        if [ $? -ne 0 ]; then
-                            printf "${bold}[!]${reset} Error updating initramfs.\n"
-                        fi
-                    fi
+                elif [ "$use_grub" = true ]; then
+                    # For GRUB, only update-grub is required
+                    printf "${bold}[-]${reset} Running update-grub...\n"
 				    /usr/sbin/update-grub
 				    if [ $? -ne 0 ]; then
-					    printf "${bold}[!]${reset} Error updating GRUB.\n"
+					    printf "${bold}${red}[!] CRITICAL ERROR:${reset} Failed to update GRUB.\n"
+					    printf "${bold}[!]${reset} System may be unbootable. Manual intervention required.\n"
+					    printf "${bold}[!]${reset} Try running: update-grub\n"
+					    exit 1
 				    fi
+                else
+                    # Should never reach here due to earlier check, but fail safe
+                    printf "${bold}${red}[!] CRITICAL ERROR:${reset} No valid bootloader configuration found.\n"
+                    exit 1
                 fi
 			else
-				printf "Dry run: Would have run 'proxmox-boot-tool refresh' or 'update-grub' and optionally 'update-initramfs'\n"
+				if [ "$use_pbt" = true ]; then
+					printf "Dry run: Would have run 'update-initramfs -u' and 'proxmox-boot-tool refresh'\n"
+				else
+					printf "Dry run: Would have run 'update-grub'\n"
+				fi
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
 			
@@ -609,6 +824,11 @@ pve_kernel_clean() {
 
 # Function to check for updates
 check_for_update() {
+    # Skip update check in dry-run mode (no system modifications allowed)
+    if [ "$dry_run" = "true" ]; then
+        return 0
+    fi
+    
     # Check if running from within a git repository
     if git -C "$(dirname "$0")" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         local remote_version
