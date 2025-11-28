@@ -230,17 +230,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;
+			;;i
 			2)
 				cron_time="weekly"
-			;;
+			;;i
 			3)
 				cron_time="monthly"
-			;;
+			;;i
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;
+			;;i
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -526,19 +526,21 @@ while [[ $# -gt 0 ]]; do
 			main
 			install_program
 		        ;;
-		        -r|--remove )			main
+		-r|--remove )
+			main
+			uninstall_program
 		;;
 		-s|--scheduler)
 			main
 			scheduler
-		;;i
+		;;
 		-v|--version)
 			version
-		;;i
+		;;
 		-h|--help)
 			main
 			exit 0
-		;;i
+		;;
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -548,26 +550,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;;i
+		;;
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;;i
+		;;
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;;i	
+		;;
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;;i							
+		;;
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;;i
+		;;
 esac
     shift
 done
