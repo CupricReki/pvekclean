@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.0"
+version="2.2.1"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -134,37 +134,82 @@ get_drive_status() {
 
 # Show current system information
 kernel_info() {
+    local use_pbt=false
+    if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+        use_pbt=true
+    fi
+
 	# Lastest kernel installed
-	latest_kernel=$(dpkg --list | awk '/(pve|proxmox)-kernel-.*-pve/{print $2}' | sed -n 's/.*-//p' | sort -V | tail -n 1 | tr -d '[:space:]')
-	[ -z "$latest_kernel" ] && latest_kernel="N/A"
-	# Show operating system used
-	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ "]//g' | awk '{print $0}')\n"
-	# Show current kernel in use
+	local latest_installed_kernel_ver
+    latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
+	[ -z "$latest_installed_kernel_ver" ] && latest_installed_kernel_ver="N/A"
+
+    printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ \\"]//g' | awk '{print $0}')\n"
+    if [ "$use_pbt" = true ]; then
+        printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
+        local esp_uuid
+        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        local boot_total_h=""
+        local boot_used_h=""
+        local boot_free_h=""
+        local boot_percent="N/A"
+        if [ -n "$esp_uuid" ]; then
+            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
+            mkdir -p "$mount_point"
+            if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+                local boot_details=($(df -P "$mount_point" | tail -1))
+                if [ ${#boot_details[@]} -ge 5 ]; then
+                    boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+                    boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+                    boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
+                    boot_percent=${boot_details[4]%?}
+                fi
+                umount "$mount_point"
+                rmdir "$mount_point"
+            fi
+        fi
+        local boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        local boot_drive_status=$(get_drive_status "${boot_info[4]}")
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+    else
+        printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
+        local boot_details=($(df -P /boot 2>/dev/null | tail -1))
+        local boot_total_h=""
+        local boot_used_h=""
+        local boot_free_h=""
+        local boot_percent="N/A"
+        if [ ${#boot_details[@]} -ge 5 ]; then
+            boot_total_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $2}')
+            boot_used_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $3}')
+            boot_free_h=$(df -h /boot 2>/dev/null | tail -1 | awk '{print $4}')
+            boot_percent=${boot_details[4]%?}
+        fi
+        local boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        local boot_drive_status=$(get_drive_status "${boot_info[4]}")
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
+    fi
+
+
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
-	# Check if they are running a PVE kernel
-	if [[ "$current_kernel" == *"pve"* ]]; then
-		# Check if we are running the latest kernel, if not warn
-		if [[ "$latest_kernel" != *"$current_kernel"* ]]; then
-			printf " ${bold}Latest Kernel:${reset} ${latest_kernel}\n"
-		fi
-	# Warn them that they aren't on a PVE kernel
-	else
-		printf "___________________________________________
+    # Check if we are running the latest kernel, if not warn
+    if [[ "$latest_installed_kernel_ver" != *"$current_kernel"* ]]; then
+        printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
+    fi
+
+    if [[ \"$current_kernel\" != *\"pve\"* ]]; then
+        printf "___________________________________________
 "
-		printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
-		# Ask them if they want to continue
-		printf "${bold}[*]${reset} Would you like to continue [y/N] "
-		read -n 1 -r
-		printf "\n"
-		if [[ $REPLY =~ ^[Yy]$ ]]; then
-			# Continue on if they wish
-			printf "${bold}[-]${reset} Alright, we will continue on\n"
-		else
-			# Exit script
-			printf "\nGood bye!\n"
-			exit 0
-		fi
-	fi
+        printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
+        printf "${bold}[*]${reset} Would you like to continue [y/N] "
+        read -n 1 -r
+        printf "\n"
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            printf "${bold}[-]${reset} Alright, we will continue on\n"
+        else
+            printf "\nGood bye!\n"
+            exit 0
+        fi
+    fi
 	printf "___________________________________________
 "
 }
@@ -226,17 +271,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;
+			;; 
 			2)
 				cron_time="weekly"
-			;;
+			;; 
 			3)
 				cron_time="monthly"
-			;;
+			;; 
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;
+			;; 
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -297,6 +342,9 @@ install_program() {
 				printf "${bold}[-]${reset} Run the command \"$program_name -r\" to remove this program at any time.\n"
 				exit 0
 			fi
+			# if [ -n "$force_pvekclean_install" ]; then
+			# 	exit 0
+			# fi
 		fi
 	fi
 	if [ -n "$force_pvekclean_install" ]; then
@@ -319,6 +367,7 @@ uninstall_program() {
 			printf "${bold}[-]${reset} Sorry to see you go :(\n"
 		else
 			printf "\nExiting...\nThat was a close one ⎦˚◡˚⎣\n"
+			printf "${bold}[-]${reset} Have a nice $(timeGreeting) ⎦˚◡˚⎣\n"
 		fi
 		exit 0
 	else
@@ -389,60 +438,8 @@ recover_esp_space() {
 # PVE Kernel Clean main function
 pve_kernel_clean() {
     local use_pbt=false
-    local boot_info=()
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
         use_pbt=true
-    fi
-
-    # --- Determine Boot Partition Info ---
-    if [ "$use_pbt" = true ]; then
-        printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
-        local esp_uuid
-        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
-        if [ -n "$esp_uuid" ]; then
-            local mount_point="/var/tmp/pvekclean_esp_mount_$$"
-            mkdir -p "$mount_point"
-            if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
-                boot_details=($(df -P "$mount_point" | tail -1))
-                boot_total_h=$(df -h "$mount_point" | tail -1 | awk '{print $2}')
-                boot_used_h=$(df -h "$mount_point" | tail -1 | awk '{print $3}')
-                boot_free_h=$(df -h "$mount_point" | tail -1 | awk '{print $4}')
-                boot_percent=${boot_details[4]%?}
-                boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
-                umount "$mount_point"
-                rmdir "$mount_point"
-            fi
-        fi
-    else
-        printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
-        boot_details=($(df -P /boot 2>/dev/null | tail -1))
-        if [ ${#boot_details[@]} -ge 5 ]; then
-            boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
-            boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
-            boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
-            boot_percent=${boot_details[4]%?}
-            boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
-        fi
-    fi
-
-    if [ -z "${boot_info[4]}" ]; then
-        boot_info=("" "" "" "" "N/A")
-    fi
-    
-	# Display Boot Disk Info
-	local boot_drive_status
-    boot_drive_status=$(get_drive_status "${boot_info[4]}")
-	printf "${bold}[*]${reset} Boot disk space used is ${bold}${boot_drive_status}${reset} at ${boot_info[4]}%% capacity (${boot_info[3]} free)\n"
-	
-    # --- Space Recovery Check ---
-    if [ -n "${boot_info[4]}" ] && [[ "${boot_info[4]}" =~ ^[0-9]+$ ]] && [ "${boot_info[4]}" -gt "$boot_critical_percent" ]; then
-        if [ "$use_pbt" = true ]; then
-            recover_esp_space
-        else
-            printf "\n${bold}${red}[!] FATAL: /boot partition is critically full!${reset}\n"
-            printf "Automated cleanup cannot proceed safely. Run the script again after manually freeing space.\n"
-            exit 1
-        fi
     fi
 
     # --- Kernel Discovery ---
@@ -649,6 +646,9 @@ check_for_update() {
 					printf "${bold}[*]${reset} Update aborted!\n"
 				fi
 			fi
+			# if [ -n "$force_pvekclean_install" ]; then
+			# 	exit 0
+			# fi
 		fi
 	fi
 }
@@ -683,22 +683,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;;
+		;; 
 		-r|--remove )
 			main
 			uninstall_program
-		;;
+		;; 
 		-s|--scheduler)
 			main
 			scheduler
-		;;
+		;; 
 		-v|--version)
 			version
-		;;
+		;; 
 		-h|--help)
 			main
 			exit 0
-		;;
+		;; 
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -708,26 +708,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;;
+		;; 
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;;
+		;; 
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;;
+		;; 
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;;
+		;; 
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;;
+		;; 
 esac
     shift
 done
