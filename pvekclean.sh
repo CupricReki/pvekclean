@@ -574,8 +574,17 @@ cleanup_on_exit() {
     done
 }
 
+# Handle interrupt signal (Ctrl+C)
+handle_interrupt() {
+    printf "\n\n${bold}${yellow}[!] Interrupted by user${reset}\n"
+    cleanup_on_exit
+    printf "${bold}[-]${reset} Cleaned up temporary files. Exiting.\n"
+    exit 130  # Standard exit code for SIGINT (128 + 2)
+}
+
 # Set trap to cleanup on exit, interrupt, or termination
-trap cleanup_on_exit EXIT INT TERM
+trap cleanup_on_exit EXIT
+trap handle_interrupt INT TERM
 
 # PVE Kernel Clean main function
 pve_kernel_clean() {
