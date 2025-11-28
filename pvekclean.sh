@@ -33,10 +33,6 @@ ______________________________________________
 # Percentage of used space in the /boot which would consider it critically full
 boot_critical_percent="95"
 
-# Default minimum number of old kernels to keep as fallback (besides current and latest)
-# Set to 0 to disable, or override with --keep flag
-default_keep_kernels="1"
-
 # To check for updates or not
 check_for_updates=true
 
@@ -172,28 +168,34 @@ kernel_info() {
         printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
         local esp_uuid
         esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
-        local boot_total_h=""
-        local boot_used_h=""
-        local boot_free_h=""
+        local boot_total_h="N/A"
+        local boot_used_h="N/A"
+        local boot_free_h="N/A"
         local boot_percent="N/A"
         if [ -n "$esp_uuid" ]; then
             local mount_point="/var/tmp/pvekclean_esp_mount_$$"
             mkdir -p "$mount_point"
             if mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
-                local boot_details=($(df -P "$mount_point" | tail -1))
-                if [ ${#boot_details[@]} -ge 5 ]; then
-                    boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
-                    boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
-                    boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
-                    boot_percent=${boot_details[4]%?}
+                # Verify mount succeeded by checking if it's actually mounted
+                if mountpoint -q "$mount_point" 2>/dev/null; then
+                    local boot_details=($(df -P "$mount_point" | tail -1))
+                    if [ ${#boot_details[@]} -ge 5 ]; then
+                        boot_total_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $2}')
+                        boot_used_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $3}')
+                        boot_free_h=$(df -h "$mount_point" 2>/dev/null | tail -1 | awk '{print $4}')
+                        boot_percent=${boot_details[4]%?}
+                    fi
                 fi
-                umount "$mount_point"
-                rmdir "$mount_point"
+                umount "$mount_point" 2>/dev/null
+                rmdir "$mount_point" 2>/dev/null
+            else
+                # Mount failed, clean up
+                rmdir "$mount_point" 2>/dev/null
             fi
         fi
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
+		printf " ${bold}Boot Disk (ESP):${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     elif [ "$use_grub" = true ]; then
         printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
         local boot_details=($(df -P /boot 2>/dev/null | tail -1))
@@ -209,7 +211,7 @@ kernel_info() {
         fi
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
-		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
+		printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
     else
         # No supported bootloader detected
         printf " ${bold}Boot Method:${reset} ${red}UNKNOWN/UNSUPPORTED${reset}\n"
@@ -219,11 +221,9 @@ kernel_info() {
 
 
 	printf " ${bold}Current Kernel:${reset} $current_kernel\n"
-	printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
-    printf "___________________________________________\n"
-    
     # Check if we are running the latest kernel, if not warn
-    if [[ "$latest_installed_kernel_ver" != "$current_kernel" ]]; then
+    if [[ "$latest_installed_kernel_ver" != *"$current_kernel"* ]]; then
+        printf " ${bold}Latest Kernel:${reset} ${latest_installed_kernel_ver}\n"
         printf "\n${bold}${yellow}[!] WARNING:${reset} You are NOT booted into the latest kernel!\n"
         printf "${bold}[!]${reset} Current: $current_kernel\n"
         printf "${bold}[!]${reset} Latest:  ${latest_installed_kernel_ver}\n"
@@ -245,7 +245,9 @@ kernel_info() {
     fi
 
     if [[ "$current_kernel" != *"pve"* ]]; then
-        printf "${bold}${yellow}[!] WARNING:${reset} You're not running a PVE kernel\n"
+        printf "___________________________________________
+"
+        printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
         printf "${bold}[*]${reset} Would you like to continue [y/N] "
         read -n 1 -r
         printf "\n"
@@ -256,6 +258,8 @@ kernel_info() {
             exit 0
         fi
     fi
+	printf "___________________________________________
+"
 }
 
 # Usage information on how to use PVE Kernel Clean
@@ -264,8 +268,6 @@ show_usage() {
 	if [ $force_purge == false ]; then
 		printf "${bold}Usage:${reset} $(basename $0) [OPTION1] [OPTION2]...\n\n"
 		printf "  -k, --keep [number]   Keep the specified number of most recent PVE kernels on the system\n"
-		printf "                        ${bold}Default: $default_keep_kernels${reset} (keeps fallback kernel for safety)\n"
-		printf "                        Set to 0 to remove all old kernels (not recommended)\n"
 		printf "                        Can be used with -f or --force for non-interactive removal\n"
 		printf "  -f, --force           Force the removal of old PVE kernels without confirm prompts\n"
 		printf "                        ${bold}WARNING:${reset} Bypasses safety checks including kernel version verification\n"
@@ -349,11 +351,6 @@ scheduler() {
 
 # Installs PVE Kernel Cleaner for easier access
 install_program() {
-	# Skip installation prompts in dry-run mode (no system modifications allowed)
-	if [ "$dry_run" = "true" ]; then
-		return 0
-	fi
-	
 	force_pvekclean_update=false
     local tmp_file="/tmp/.pvekclean_install_lock"
     local install=false
@@ -430,61 +427,87 @@ uninstall_program() {
 	fi
 }
 
-recover_esp_space() {
-    printf "\n${bold}${yellow}[!] Attempting to recover space on EFI System Partition...${reset}\n"
+remove_orphaned_esp_kernels() {
+    [ "$use_pbt" != true ] && return
+    
     local esp_uuid
-    esp_uuid=$(proxmox-boot-tool status | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+    esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+    
     if [ -z "$esp_uuid" ]; then
-        printf "${bold}${red}[!] Could not determine ESP UUID. Aborting recovery.${reset}\n"
-        return 1
+        return
     fi
 
-    local mount_point="/mnt/esp_pvekclean"
+    local mount_point="/var/tmp/pvekclean_esp_orphans_$$"
     mkdir -p "$mount_point"
-    if ! mount /dev/disk/by-uuid/"$esp_uuid" "$mount_point"; then
-        printf "${bold}${red}[!] Failed to mount ESP at $mount_point. Aborting recovery.${reset}\n"
+    
+    if ! mount -o ro /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
         rmdir "$mount_point"
-        return 1
+        return
     fi
-
-    local oldest_kernel_on_esp=""
-    local running_kernel_ver
-    running_kernel_ver=$(uname -r)
 
     local esp_kernels
     esp_kernels=$(ls "$mount_point"/vmlinuz-* 2>/dev/null | sed -n 's/.*vmlinuz-//p')
+    
+    # We need to unmount here because we might need to mount RW later to delete
+    umount "$mount_point"
+    rmdir "$mount_point"
 
-    for k in $esp_kernels; do
-        if [[ "$k" == "$running_kernel_ver" ]]; then
+    local orphans=()
+    
+    for k_ver in $esp_kernels; do
+        # Skip running kernel
+        if [[ "$current_kernel" == *"$k_ver"* ]]; then
             continue
         fi
 
-        if [[ -z "$oldest_kernel_on_esp" ]]; then
-            oldest_kernel_on_esp=$k
-        else
-            if dpkg --compare-versions "$k" "lt" "$oldest_kernel_on_esp"; then
-                oldest_kernel_on_esp=$k
-            fi
+        local is_installed=false
+        # Check if any package owns this kernel version
+        for pkg_prefix in "pve-kernel-" "proxmox-kernel-"; do
+             if dpkg-query -W -f='${Status}' "${pkg_prefix}${k_ver}" 2>/dev/null | grep -q "ok installed"; then
+                 is_installed=true
+                 break
+             fi
+        done
+        
+        if [ "$is_installed" = false ]; then
+            orphans+=("$k_ver")
         fi
     done
 
-    if [[ -n "$oldest_kernel_on_esp" ]]; then
-        printf "${bold}[-]${reset} Found oldest unused kernel on ESP: ${cyan}$oldest_kernel_on_esp${reset}\n"
-        if [ "$dry_run" != "true" ]; then
-            printf "${bold}[-]${reset} Removing boot files to make space...\n"
-            rm -f "$mount_point/vmlinuz-$oldest_kernel_on_esp"
-            rm -f "$mount_point/initrd.img-$oldest_kernel_on_esp"
-            printf "${bold}${green}[✔]${reset} Successfully removed old kernel files from ESP.\n"
-        else
-            printf "${bold}[-]${reset} Dry run: Would have removed vmlinuz-$oldest_kernel_on_esp and initrd.img-$oldest_kernel_on_esp from ESP.\n"
+    if [ ${#orphans[@]} -gt 0 ]; then
+        printf "\n${bold}[-]${reset} Detected ${#orphans[@]} orphaned kernel(s) on ESP (files exist, but package is gone):\n"
+        for orphan in "${orphans[@]}"; do
+            printf "  ${bold}${orange}?${reset} vmlinuz-$orphan\n"
+        done
+        
+        if [ "$force_purge" = false ]; then
+             printf "${bold}[*]${reset} Do you want to remove these orphaned files? [y/N]: "
+             read -n 1 -r
+             printf "\n"
+             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                 printf "${bold}[-]${reset} Skipping orphan cleanup.\n"
+                 return
+             fi
         fi
-    else
-        printf "${bold}${yellow}[!] Could not find an old kernel to remove from ESP.${reset}\n"
-    fi
 
-    umount "$mount_point"
-    rmdir "$mount_point"
-    printf "${bold}[-]${reset} Resuming normal cleanup...\n"
+        # Mount RW to delete
+        mkdir -p "$mount_point"
+        if mount /dev/disk/by-uuid/"$esp_uuid" "$mount_point" 2>/dev/null; then
+             for orphan in "${orphans[@]}"; do
+                 if [ "$dry_run" != "true" ]; then
+                     rm -f "$mount_point/vmlinuz-$orphan"
+                     rm -f "$mount_point/initrd.img-$orphan"
+                     printf "  ${bold}${green}✓${reset} Removed orphan: $orphan\n"
+                 else
+                     printf "  Dry run: Would remove vmlinuz-$orphan and initrd.img-$orphan\n"
+                 fi
+             done
+             umount "$mount_point"
+        else
+             printf "${bold}${red}[!]${reset} Failed to mount ESP for writing.\n"
+        fi
+        rmdir "$mount_point"
+    fi
 }
 
 
@@ -548,6 +571,9 @@ pve_kernel_clean() {
     fi
 
     # --- Kernel Discovery ---
+    # Check for orphans first if using PBT
+    remove_orphaned_esp_kernels
+
     local kernel_packages_to_remove=()
     local latest_installed_kernel_ver
     latest_installed_kernel_ver=$(dpkg-query -W -f='${Version}\n' 'proxmox-kernel-*-pve' 'pve-kernel-*-pve' 2>/dev/null | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
@@ -570,11 +596,11 @@ pve_kernel_clean() {
         
         for k_ver in "${esp_kernels[@]}"; do
             # Always skip running kernel
-            if [[ "$k_ver" == "$current_kernel" ]]; then
+            if [[ "$current_kernel" == *"$k_ver"* ]]; then
                 continue
             fi
             # Skip latest kernel unless --remove-newer is set
-            if [[ "$k_ver" == "$latest_installed_kernel_ver" ]]; then
+            if [[ "$latest_installed_kernel_ver" == *"$k_ver"* ]]; then
                 continue
             fi
             # Skip kernels newer than current unless --remove-newer is set
@@ -604,11 +630,11 @@ pve_kernel_clean() {
             kernel_version=$(echo "$kernel_pkg" | sed -n 's/.*-\([0-9].*\)/\1/p')
 
             # Always skip running kernel
-            if [[ "$kernel_version" == "$current_kernel" ]]; then
+            if [[ "$current_kernel" == *"$kernel_version"* ]]; then
                 continue
             fi
             # Skip latest kernel unless --remove-newer is set
-            if [[ "$kernel_version" == "$latest_installed_kernel_ver" ]]; then
+            if [[ "$latest_installed_kernel_ver" == *"$kernel_version"* ]]; then
                 continue
             fi
             # Skip kernels newer than current unless --remove-newer is set
@@ -678,14 +704,6 @@ pve_kernel_clean() {
     fi
 
     local kernels_to_keep=()
-	
-	# Apply default kernel retention if user didn't specify --keep
-	if [[ -z "$keep_kernels" ]] && [[ "$default_keep_kernels" =~ ^[0-9]+$ ]] && [ "$default_keep_kernels" -gt 0 ]; then
-		keep_kernels="$default_keep_kernels"
-		printf "${bold}[*]${reset} Applying default policy: keeping at least ${bold}$keep_kernels${reset} old kernel$([ "$keep_kernels" -eq 1 ] || echo 's') as fallback.\n"
-		printf "${bold}[*]${reset} (You can override this with --keep <number> or set default_keep_kernels=0 in the script)\n"
-	fi
-	
 	# If keep_kernels is set we remove this number from the array to remove
 	if [[ -n "$keep_kernels" ]] && [[ "$keep_kernels" =~ ^[0-9]+$ ]]; then
 		if [ "$keep_kernels" -gt 0 ]; then
@@ -703,9 +721,7 @@ pve_kernel_clean() {
             for pkg in "${kernel_packages_to_remove[@]}"; do
                 local is_kept=false
                 for kept_kernel in "${unique_kernels_to_keep[@]}"; do
-                    # Check if pkg is exactly the kept kernel OR its corresponding headers package
-                    local kept_headers=$(echo "$kept_kernel" | sed 's/kernel/headers/')
-                    if [[ "$pkg" == "$kept_kernel" ]] || [[ "$pkg" == "$kept_headers" ]]; then
+                    if [[ "$pkg" == *"$kept_kernel"* ]]; then
                         kernels_to_keep+=("$pkg")
                         is_kept=true
                         break
@@ -822,11 +838,6 @@ pve_kernel_clean() {
 
 # Function to check for updates
 check_for_update() {
-    # Skip update check in dry-run mode (no system modifications allowed)
-    if [ "$dry_run" = "true" ]; then
-        return 0
-    fi
-    
     # Check if running from within a git repository
     if git -C "$(dirname "$0")" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         local remote_version
