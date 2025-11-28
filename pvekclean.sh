@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.7"
+version="2.0.8"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -140,7 +140,17 @@ kernel_info() {
 	# Show operating system used
 	printf " ${bold}OS:${reset} $(cat /etc/os-release | grep "PRETTY_NAME" | sed 's/PRETTY_NAME=//g' | sed 's/[ "]//g' | awk '{print $0}')\n"
 	# Get information about the /boot folder
-	boot_info=($(df -Ph /boot | tail -1 | sed 's/%%//g'))
+    boot_details=($(df -P /boot | tail -1))
+    if [ ${#boot_details[@]} -ge 5 ]; then
+        boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
+        boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
+        boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
+        boot_percent=${boot_details[4]%?}
+        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+    else
+        boot_info=("" "" "" "" "") # Set empty values if df output is not as expected
+    fi
+
 	# Show information about the /boot
 	printf " ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
 	# Show current kernel in use
@@ -154,7 +164,7 @@ kernel_info() {
 	# Warn them that they aren't on a PVE kernel
 	else
 		printf "___________________________________________
-\n"
+"
 		printf "${bold}[!]${reset} Warning, you're not running a PVE kernel\n"
 		# Ask them if they want to continue
 		printf "${bold}[*]${reset} Would you like to continue [y/N] "
@@ -170,7 +180,7 @@ kernel_info() {
 		fi
 	fi
 	printf "___________________________________________
-\n"
+"
 }
 
 # Usage information on how to use PVE Kernel Clean
@@ -188,7 +198,7 @@ show_usage() {
 		printf "  -i, --install         Install $program_name to the system\n"
 		printf "  -d, --dry-run         Run the program in dry run mode for testing without making system changes\n"
 		printf "___________________________________________
-\n"
+"
 	fi
 }
 
@@ -230,17 +240,17 @@ scheduler() {
 		case "$response" in
 			1)
 				cron_time="daily"
-			;;
+			;; 
 			2)
 				cron_time="weekly"
-			;;
+			;; 
 			3)
 				cron_time="monthly"
-			;;
+			;; 
 			*)
 				printf "\nThat is not a valid option!\n"
 				exit 1
-			;;
+			;; 
 		esac
 		# Ask if they want to set a specific number of kernels to keep
         printf "${bold}[-]${reset} Enter the number of latest kernels to keep (or press Enter to skip): "
@@ -335,7 +345,7 @@ uninstall_program() {
 # PVE Kernel Clean main function
 pve_kernel_clean() {
 	# Find all the PVE kernels on the system
-	installed_kernels=$(dpkg --list | grep -E "(pve-kernel|proxmox-kernel)-[0-9]+\.[0-9]+\..*" | grep -E "Kernel Image" | awk '{print $2}')
+	installed_kernels=$(dpkg --list | grep -E '^(ii|ri|ui|hi).*(pve|proxmox)-kernel-[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-pve' | awk '{print $2}')
 	
 	# Get the latest kernel version
 	latest_kernel_version=$(echo "$installed_kernels" | sed -n 's/.*-\([0-9].*\)/\1/p' | sort -V | tail -n 1)
@@ -453,16 +463,32 @@ pve_kernel_clean() {
 			printf "${bold}[*]${reset} Updating GRUB..."
 			# Update grub after kernels are removed
 			if [ "$dry_run" != "true" ]; then
-				/usr/sbin/update-grub
-				if [ $? -ne 0 ]; then
-					printf "${bold}[!]${reset} Error updating GRUB.\n"
-				fi
+                if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
+                    /usr/sbin/proxmox-boot-tool refresh
+                    if [ $? -ne 0 ]; then
+                        printf "${bold}[!]${reset} Error updating bootloader with proxmox-boot-tool.\n"
+                    fi
+                else
+				    /usr/sbin/update-grub
+				    if [ $? -ne 0 ]; then
+					    printf "${bold}[!]${reset} Error updating GRUB.\n"
+				    fi
+                fi
 			else
-				printf "Dry run: Would have run 'update-grub'\n"
+				printf "Dry run: Would have run 'proxmox-boot-tool refresh' or 'update-grub'\n"
 			fi
 			printf "${bold}${green}DONE!${reset}\n"
 			# Get information about the /boot folder
-			boot_info=($(df -Ph /boot | tail -1 | sed 's/%%//g'))
+            boot_details=($(df -P /boot | tail -1))
+            if [ ${#boot_details[@]} -ge 5 ]; then
+                boot_total_h=$(df -h /boot | tail -1 | awk '{print $2}')
+                boot_used_h=$(df -h /boot | tail -1 | awk '{print $3}')
+                boot_free_h=$(df -h /boot | tail -1 | awk '{print $4}')
+                boot_percent=${boot_details[4]%?}
+                boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+            else
+                boot_info=("" "" "" "" "") # Set empty values if df output is not as expected
+            fi
 			# Show information about the /boot
 			printf "${bold}[-]${reset} ${bold}Boot Disk:${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free] \n"
 			# Script finished successfully
@@ -542,22 +568,22 @@ while [[ $# -gt 0 ]]; do
 			force_pvekclean_install=true
 			main
 			install_program
-		;;
+		;; 
 		-r|--remove )
 			main
 			uninstall_program
-		;;
+		;; 
 		-s|--scheduler)
 			main
 			scheduler
-		;;
+		;; 
 		-v|--version)
 			version
-		;;
+		;; 
 		-h|--help)
 			main
 			exit 0
-		;;
+		;; 
 		-k|--keep)
 			if [[ $# -gt 1 && "$2" =~ ^[0-9]+$ ]]; then
                 keep_kernels="$2"
@@ -567,26 +593,26 @@ while [[ $# -gt 0 ]]; do
                 echo -e "${bold}Error:${reset} --keep/-k requires a number argument."
                 exit 1
             fi
-		;;
+		;; 
 		-f|--force)
 			force_purge=true
 			shift
 			continue
-		;;
+		;; 
 		-rn|--remove-newer)
 			remove_newer=true
 			shift
 			continue
-		;;
+		;; 
 		-d|--dry-run)
 			dry_run=true
 			shift
 			continue
-		;;
+		;; 
 		*)
 			echo -e "${bold}Unknown option:${reset} $1"
 			exit 1
-		;;
+		;; 
 esac
     shift
 done
