@@ -2,9 +2,9 @@
 
 Easily remove old/unused PVE kernels on your Proxmox VE system
 
-[![Version](https://img.shields.io/badge/Version-v2.0.2-brightgreen)](https://github.com/jordanhillis/pvekclean)
+[![Version](https://img.shields.io/badge/Version-v2.0.3-brightgreen)](https://github.com/CupricReki/pvekclean)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](https://opensource.org/licenses/MIT)
-![Updated](https://img.shields.io/github/last-commit/jordanhillis/pvekclean)
+![Updated](https://img.shields.io/github/last-commit/CupricReki/pvekclean)
 ![Proxmox](https://img.shields.io/badge/-Proxmox-orange)
 ![Debian](https://img.shields.io/badge/-Debian-red)
 
@@ -57,7 +57,7 @@ You can install PVE Kernel Cleaner using either Git or Curl. Choose the method t
 2. Enter the following commands one by one to install PVE Kernel Cleaner:
 
 ```bash
-git clone https://github.com/jordanhillis/pvekclean.git
+git clone https://github.com/CupricReki/pvekclean.git
 cd pvekclean
 chmod +x pvekclean.sh
 ./pvekclean.sh
@@ -69,7 +69,7 @@ chmod +x pvekclean.sh
 2. Use the following command to install PVE Kernel Cleaner:
 
 ```bash
-curl -o pvekclean.sh https://raw.githubusercontent.com/jordanhillis/pvekclean/master/pvekclean.sh
+curl -o pvekclean.sh https://raw.githubusercontent.com/CupricReki/pvekclean/master/pvekclean.sh
 chmod +x pvekclean.sh
 ./pvekclean.sh
 ```

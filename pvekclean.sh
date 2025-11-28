@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.0.2"
+version="2.0.3"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -413,14 +413,8 @@ pve_kernel_clean() {
 				printf "${bold}[-]${reset} Removing kernel: $kernel..."
 				# Purge the old kernels via apt and suppress output
 				if [ "$dry_run" != "true" ]; then
-					/usr/bin/apt purge -y pve-kernel-$kernel > /dev/null 2>&1
-					/usr/bin/apt purge -y proxmox-kernel-$kernel > /dev/null 2>&1
-					/usr/bin/apt purge -y pve-kernel-${kernel%-pve} > /dev/null 2>&1
-					/usr/bin/apt purge -y proxmox-kernel-${kernel%-pve} > /dev/null 2>&1
-					/usr/bin/apt purge -y pve-headers-${kernel%-pve} > /dev/null 2>&1
-					/usr/bin/apt purge -y proxmox-headers-${kernel%-pve} > /dev/null 2>&1
+					DEBIAN_FRONTEND=noninteractive /usr/bin/apt purge -y pve-kernel-$kernel proxmox-kernel-$kernel pve-kernel-${kernel%-pve} proxmox-kernel-${kernel%-pve} pve-headers-${kernel%-pve} proxmox-headers-${kernel%-pve}
 				fi
-				sleep 1			
 				printf "${bold}${green}DONE!${reset}\n"
 			done
 			printf "${bold}[*]${reset} Updating GRUB..."
