@@ -99,16 +99,16 @@ version() {
 
 # Header for PVE Kernel Cleaner
 header_info() {
-echo -e " ${bg_black}${orange}                                                ${reset} \
- ${bg_black}${orange}   █▀▀█ ▀█ █▀ █▀▀   █ █ █▀▀ █▀▀█ █▀▀▄ █▀▀ █     ${reset} \
- ${bg_black}${orange}   █  █  █▄█  █▀▀   █▀▄ █▀▀ █▄▄▀ █  █ █▀▀ █     ${reset} \
- ${bg_black}${orange}   █▀▀▀   ▀   ▀▀▀   ▀ ▀ ▀▀▀ ▀ ▀▀ ▀  ▀ ▀▀▀ ▀▀▀   ${reset} \
- ${bg_black}${orange}                                                ${reset} \
- ${bg_black}${white}   █▀▀ █   █▀▀ █▀▀█ █▀▀▄ █▀▀ █▀▀█               ${reset} \
- ${bg_black}${white}   █   █   █▀▀ █▄▄█ █  █ █▀▀ █▄▄▀  ${white}${bold}⎦˚◡˚⎣ v$version ${reset} \
- ${bg_black}${white}   ▀▀▀ ▀▀▀ ▀▀▀ ▀  ▀ ▀  ▀ ▀▀▀ ▀ ▀▀               ${reset} \
- ${bg_orange}${black}      ${bold}By Jordan Hillis [jordan@hillis.email]    ${reset}
-___________________________________________"
+printf " ${bg_black}${orange}                                                ${reset}\n"
+printf " ${bg_black}${orange}   █▀▀█ ▀█ █▀ █▀▀   █ █ █▀▀ █▀▀█ █▀▀▄ █▀▀ █     ${reset}\n"
+printf " ${bg_black}${orange}   █  █  █▄█  █▀▀   █▀▄ █▀▀ █▄▄▀ █  █ █▀▀ █     ${reset}\n"
+printf " ${bg_black}${orange}   █▀▀▀   ▀   ▀▀▀   ▀ ▀ ▀▀▀ ▀ ▀▀ ▀  ▀ ▀▀▀ ▀▀▀   ${reset}\n"
+printf " ${bg_black}${orange}                                                ${reset}\n"
+printf " ${bg_black}${white}   █▀▀ █   █▀▀ █▀▀█ █▀▀▄ █▀▀ █▀▀█               ${reset}\n"
+printf " ${bg_black}${white}   █   █   █▀▀ █▄▄█ █  █ █▀▀ █▄▄▀  ${white}${bold}⎦˚◡˚⎣ v$version ${reset}\n"
+printf " ${bg_black}${white}   ▀▀▀ ▀▀▀ ▀▀▀ ▀  ▀ ▀  ▀ ▀▀▀ ▀ ▀▀               ${reset}\n"
+printf " ${bg_orange}${black}      ${bold}By Jordan Hillis [jordan@hillis.email]    ${reset}\n"
+printf "___________________________________________\n"
 if [ "$dry_run" == "true" ]; then
 	printf "          ${bg_yellow}${black}${bold}    DRY RUN MODE IS: ${red}ON    ${reset}\n"
 	printf "${bg_green}${bold}${black} This is what the script would do in regular mode ${reset}\n${bg_green}${bold}${black}      (but without making actual changes)         ${reset}\n\n"
