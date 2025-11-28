@@ -137,6 +137,8 @@ kernel_info() {
     # Determine boot method - check what bootloader is actually being used
     local use_pbt=false
     local use_grub=false
+    local use_efi_grub=false
+    local efi_partition=""
     
     # Check for proxmox-boot-tool (EFI System Partition method)
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
@@ -149,8 +151,21 @@ kernel_info() {
         fi
     fi
     
-    # Check for GRUB (if proxmox-boot-tool not detected)
-    if [ "$use_pbt" = false ]; then
+    # Check for EFI with GRUB (if proxmox-boot-tool not detected)
+    if [ "$use_pbt" = false ] && [ -d "/sys/firmware/efi" ]; then
+        # Check if /boot/efi is mounted (common EFI setup)
+        if mountpoint -q /boot/efi 2>/dev/null; then
+            efi_partition="/boot/efi"
+            use_efi_grub=true
+        # Check if /efi is mounted (alternative setup)
+        elif mountpoint -q /efi 2>/dev/null; then
+            efi_partition="/efi"
+            use_efi_grub=true
+        fi
+    fi
+    
+    # Check for GRUB on /boot (BIOS/Legacy or if EFI not detected)
+    if [ "$use_pbt" = false ] && [ "$use_efi_grub" = false ]; then
         if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
             use_grub=true
         fi
@@ -208,8 +223,24 @@ kernel_info() {
         boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
         local boot_drive_status=$(get_drive_status "${boot_info[4]}")
 		printf " ${bold}Boot Disk (ESP):${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
+    elif [ "$use_efi_grub" = true ]; then
+        printf " ${bold}Boot Method:${reset} GRUB (EFI System Partition)\n"
+        local boot_details=($(df -P "$efi_partition" 2>/dev/null | tail -1))
+        local boot_total_h=""
+        local boot_used_h=""
+        local boot_free_h=""
+        local boot_percent="N/A"
+        if [ ${#boot_details[@]} -ge 5 ]; then
+            boot_total_h=$(df -h "$efi_partition" 2>/dev/null | tail -1 | awk '{print $2}')
+            boot_used_h=$(df -h "$efi_partition" 2>/dev/null | tail -1 | awk '{print $3}')
+            boot_free_h=$(df -h "$efi_partition" 2>/dev/null | tail -1 | awk '{print $4}')
+            boot_percent=${boot_details[4]%?}
+        fi
+        boot_info=("" "$boot_total_h" "$boot_used_h" "$boot_free_h" "$boot_percent")
+        local boot_drive_status=$(get_drive_status "${boot_info[4]}")
+		printf " ${bold}Boot Disk (ESP):${reset} ${boot_info[4]}%% full [${boot_info[2]}/${boot_info[1]} used, ${boot_info[3]} free]\n"
     elif [ "$use_grub" = true ]; then
-        printf " ${bold}Boot Method:${reset} GRUB (/boot)\n"
+        printf " ${bold}Boot Method:${reset} GRUB (Legacy/BIOS)\n"
         local boot_details=($(df -P /boot 2>/dev/null | tail -1))
         local boot_total_h=""
         local boot_used_h=""
@@ -546,6 +577,7 @@ pve_kernel_clean() {
     # Determine boot method early - check what bootloader is actually being used
     local use_pbt=false
     local use_grub=false
+    local use_efi_grub=false
     local bootloader_detected=false
     
     # Check for proxmox-boot-tool (EFI System Partition method)
@@ -563,7 +595,18 @@ pve_kernel_clean() {
         fi
     fi
     
-    # Check for GRUB (if proxmox-boot-tool not detected)
+    # Check for EFI with GRUB (if proxmox-boot-tool not detected)
+    if [ "$bootloader_detected" = false ] && [ -d "/sys/firmware/efi" ]; then
+        # Check if /boot/efi is mounted (common EFI setup)
+        if mountpoint -q /boot/efi 2>/dev/null || mountpoint -q /efi 2>/dev/null; then
+            if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
+                use_efi_grub=true
+                bootloader_detected=true
+            fi
+        fi
+    fi
+    
+    # Check for GRUB on /boot (BIOS/Legacy or if EFI not detected)
     if [ "$bootloader_detected" = false ]; then
         if [ -x "/usr/sbin/update-grub" ] && [ -f "/boot/grub/grub.cfg" ]; then
             use_grub=true
@@ -577,6 +620,7 @@ pve_kernel_clean() {
         printf "${bold}[!]${reset} Neither proxmox-boot-tool nor GRUB could be detected.\n"
         printf "${bold}[!]${reset} This script requires one of:\n"
         printf "    - proxmox-boot-tool (EFI) with configured ESPs\n"
+        printf "    - GRUB with EFI System Partition (/boot/efi or /efi)\n"
         printf "    - GRUB with /boot/grub/grub.cfg\n"
         printf "${bold}[!]${reset} Aborting to prevent system damage.\n"
         exit 1
@@ -813,8 +857,8 @@ pve_kernel_clean() {
                         printf "${bold}[!]${reset} Try running: proxmox-boot-tool refresh\n"
                         exit 1
                     fi
-                elif [ "$use_grub" = true ]; then
-                    # For GRUB, only update-grub is required
+                elif [ "$use_efi_grub" = true ] || [ "$use_grub" = true ]; then
+                    # For GRUB (both EFI and Legacy), only update-grub is required
                     printf "${bold}[-]${reset} Running update-grub...\n"
 				    /usr/sbin/update-grub
 				    if [ $? -ne 0 ]; then
