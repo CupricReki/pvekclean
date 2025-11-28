@@ -46,7 +46,7 @@ current_kernel=$(uname -r)
 program_name="pvekclean"
 
 # Version
-version="2.2.3"
+version="2.2.4"
 
 # Text Colors
 black="\e[38;2;0;0;0m"
@@ -412,9 +412,9 @@ install_program() {
 		fi
 	fi
     # Check if the file doesn't exist or it's been over an hour since the last ask
-    if [ ! -e "$tmp_file" ] || [ ! -f "$tmp_file" ] || [ $(( $(date +%s) - $(cat "$tmp_file") )) -gt $ask_interval ] || [ $force_pvekclean_update == true ] || [ -n "$force_pvekclean_install" ]; then	
-		# If pvekclean does not exist on the system or force_purge is enabled
-		if [ ! -f /usr/local/sbin/$program_name ] || [ $force_pvekclean_update == true ] || [ -n "$force_pvekclean_install" ]; then
+    if [ ! -e "$tmp_file" ] || [ ! -f "$tmp_file" ] || [ $(( $(date +%s) - $(cat "$tmp_file") )) -gt $ask_interval ] || [ $force_pvekclean_update == true ]; then	
+	# If pvekclean does not exist on the system or force_purge is enabled
+	if [ ! -f /usr/local/sbin/$program_name ] || [ $force_pvekclean_update == true ]; then
 			# Ask user if we can install it to their system
 			if [ $force_purge == true ]; then
 				REPLY="n"
@@ -448,13 +448,7 @@ install_program() {
 				printf "${bold}[-]${reset} Continuing with kernel cleanup...\n"
 				# Don't exit - continue with the script execution
 			fi
-			# if [ -n "$force_pvekclean_install" ]; then
-			# 	exit 0
-			# fi
 		fi
-	fi
-	if [ -n "$force_pvekclean_install" ]; then
-		exit 0
 	fi
 }
 
@@ -987,15 +981,21 @@ main() {
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-		-i|--install )
-			force_pvekclean_install=true
-			main
-			install_program
-		;;
-		-r|--remove )
-			main
-			uninstall_program
-		;;
+	-i|--install )
+		force_pvekclean_install=true
+		# Skip normal flow, just install and exit
+		check_root
+		cp $0 /usr/local/sbin/$program_name
+		chmod +x /usr/local/sbin/$program_name
+		printf "${bold}${green}[✓]${reset} Installed PVE Kernel Cleaner to /usr/local/sbin/$program_name\n"
+		printf "${bold}[*]${reset} You can now use the command \"$program_name\" to run this program.\n"
+		exit 0
+	;;
+	-r|--remove )
+		# Skip normal flow, just uninstall and exit
+		check_root
+		uninstall_program
+	;;
 		-s|--scheduler)
 			main
 			scheduler
