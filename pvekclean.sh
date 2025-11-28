@@ -141,12 +141,12 @@ kernel_info() {
     local efi_partition=""
     
     # Check for proxmox-boot-tool (EFI System Partition method)
+    # Note: proxmox-boot-tool can manage ESPs even when booted in BIOS/Legacy mode
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
-        if [ -d "/sys/firmware/efi" ]; then
-            if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
-                if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -qi "ESP"; then
-                    use_pbt=true
-                fi
+        if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
+            # Check if any ESPs are actually configured (look for "is configured with")
+            if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -q "is configured with"; then
+                use_pbt=true
             fi
         fi
     fi
@@ -180,7 +180,11 @@ kernel_info() {
     
     # Display detected bootloader
     if [ "$use_pbt" = true ]; then
-        printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
+        if [ -d "/sys/firmware/efi" ]; then
+            printf " ${bold}Boot Method:${reset} proxmox-boot-tool (EFI System Partition)\n"
+        else
+            printf " ${bold}Boot Method:${reset} proxmox-boot-tool (managing ESP, booted in Legacy/BIOS)\n"
+        fi
         
         local boot_total_h="N/A"
         local boot_used_h="N/A"
@@ -189,18 +193,20 @@ kernel_info() {
         local esp_mounted=false
         local mount_point="/var/tmp/pvekclean_esp_mount_$$"
         
-        # Try to get ESP UUID from proxmox-boot-tool
-        local esp_uuid
-        esp_uuid=$(proxmox-boot-tool status 2>/dev/null | grep -oE '[0-9A-F]{4}-[0-9A-F]{4}' | head -n 1)
+        # Find first ESP partition using blkid (more reliable than parsing proxmox-boot-tool output)
+        local esp_device
+        esp_device=$(blkid -t PARTLABEL="EFI System Partition" -o device 2>/dev/null | head -n 1)
         
-        if [ -n "$esp_uuid" ]; then
+        # Fallback: look for vfat partitions on main disks
+        if [ -z "$esp_device" ]; then
+            esp_device=$(blkid -t TYPE=vfat 2>/dev/null | grep -E '/(sd[a-z]|nvme[0-9]+n[0-9]+)p?[0-9]+' | head -n 1 | cut -d: -f1)
+        fi
+        
+        if [ -n "$esp_device" ]; then
             mkdir -p "$mount_point"
             
-            # Try mounting by UUID
-            if mount -t vfat -o ro UUID="$esp_uuid" "$mount_point" 2>/dev/null; then
-                esp_mounted=true
-            # Fallback: try /dev/disk/by-uuid path
-            elif [ -e "/dev/disk/by-uuid/$esp_uuid" ] && mount -o ro "/dev/disk/by-uuid/$esp_uuid" "$mount_point" 2>/dev/null; then
+            # Try mounting the ESP device
+            if mount -t vfat -o ro "$esp_device" "$mount_point" 2>/dev/null; then
                 esp_mounted=true
             fi
             
@@ -581,16 +587,13 @@ pve_kernel_clean() {
     local bootloader_detected=false
     
     # Check for proxmox-boot-tool (EFI System Partition method)
+    # Note: proxmox-boot-tool can manage ESPs even when booted in BIOS/Legacy mode
     if [ -x "/usr/sbin/proxmox-boot-tool" ]; then
-        # Check if system has EFI firmware
-        if [ -d "/sys/firmware/efi" ]; then
-            # Check if proxmox-boot-tool is actually configured with ESPs
-            if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
-                # Verify at least one ESP is configured
-                if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -qi "ESP"; then
-                    use_pbt=true
-                    bootloader_detected=true
-                fi
+        if /usr/sbin/proxmox-boot-tool status &>/dev/null; then
+            # Check if any ESPs are actually configured (look for "is configured with")
+            if /usr/sbin/proxmox-boot-tool status 2>/dev/null | grep -q "is configured with"; then
+                use_pbt=true
+                bootloader_detected=true
             fi
         fi
     fi
@@ -652,11 +655,11 @@ pve_kernel_clean() {
         
         for k_ver in "${esp_kernels[@]}"; do
             # Always skip running kernel
-            if [[ "$current_kernel" == *"$k_ver"* ]]; then
+            if [[ "$k_ver" == "$current_kernel" ]]; then
                 continue
             fi
             # Skip latest kernel unless --remove-newer is set
-            if [[ "$latest_installed_kernel_ver" == *"$k_ver"* ]]; then
+            if [[ "$k_ver" == "$latest_installed_kernel_ver" ]]; then
                 continue
             fi
             # Skip kernels newer than current unless --remove-newer is set
